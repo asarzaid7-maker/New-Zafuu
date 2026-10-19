@@ -3364,17 +3364,24 @@ export const DIFFICULTY_CONFIG = {
   },
   medium: {
     questionCount: 20,
-    cost: 10,
-    winReward: 20,
+    cost: 20,
+    winReward: 40,
     passScorePercentage: 0.6, // 12 out of 20 to win
     color: 'amber',
   },
   hard: {
     questionCount: 30,
-    cost: 10,
-    winReward: 20,
+    cost: 30,
+    winReward: 60,
     passScorePercentage: 0.6, // 18 out of 30 to win
     color: 'rose',
+  },
+  trophy_cup: {
+    questionCount: 20,
+    cost: 150,
+    winReward: 300,
+    passScorePercentage: 0.65, // 13 out of 20 to win
+    color: 'amber',
   },
 };
 
@@ -3416,8 +3423,23 @@ export function getQuestionsForQuiz(
   difficulty: DifficultyLevel,
   excludeIds: string[] = []
 ): Question[] {
-  const targetCount = DIFFICULTY_CONFIG[difficulty].questionCount;
+  const diffConfig = DIFFICULTY_CONFIG[difficulty] || DIFFICULTY_CONFIG.easy;
+  const targetCount = diffConfig.questionCount;
   const fullPool = [...ALL_QUESTIONS, ...ADDITIONAL_QUESTIONS];
+
+  // If this is the Trophy Room championship match, pool questions from ALL competitions!
+  if (categoryId === 'trophy_room' || difficulty === 'trophy_cup') {
+    const unseen = fullPool.filter((q) => !excludeIds.includes(q.id));
+    let chosen: Question[] = [];
+    if (unseen.length >= targetCount) {
+      chosen = shuffleArray(unseen).slice(0, targetCount);
+    } else {
+      const remaining = targetCount - unseen.length;
+      const seen = fullPool.filter((q) => excludeIds.includes(q.id));
+      chosen = [...unseen, ...shuffleArray(seen).slice(0, remaining)];
+    }
+    return shuffleArray(chosen).map((q) => randomizeQuestionOptions(q));
+  }
 
   // Filter pool for this category
   const categoryPool = fullPool.filter((q) => q.category === categoryId);

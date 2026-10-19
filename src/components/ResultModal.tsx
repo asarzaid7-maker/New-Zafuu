@@ -13,7 +13,7 @@ import {
   Award,
 } from 'lucide-react';
 import { Language, QuizResult, Question } from '../types/quiz';
-import { CATEGORIES_META } from '../data/questions';
+import { CATEGORIES_META, DIFFICULTY_CONFIG } from '../data/questions';
 import { getTranslation } from '../data/translations';
 import { sounds } from '../utils/audio';
 
@@ -118,7 +118,7 @@ export const ResultModal: React.FC<ResultModalProps> = ({
             <span>
               {language === 'ar' ? 'مكافأة الفوز المكتسبة:' : 'Victory Bounty:'}
             </span>
-            <span className="text-white text-base font-black">+20 {t.coins}!</span>
+            <span className="text-white text-base font-black">+{result.coinsEarned} {t.coins}!</span>
           </div>
         )}
       </div>
@@ -171,7 +171,7 @@ export const ResultModal: React.FC<ResultModalProps> = ({
               result.isWin ? 'text-emerald-400' : 'text-slate-400'
             }`}
           >
-            {result.isWin ? '+20' : '-10'} 🪙
+            {result.isWin ? `+${result.coinsEarned}` : `-${(DIFFICULTY_CONFIG[result.difficulty] || DIFFICULTY_CONFIG.easy).cost}`} 🪙
           </div>
         </div>
       </div>
@@ -179,11 +179,11 @@ export const ResultModal: React.FC<ResultModalProps> = ({
       {/* Action Buttons */}
       <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-2">
         <button
-          onClick={onPlayAgain}
+          onClick={() => onPlayAgain()}
           className="w-full sm:w-auto px-6 py-3.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-sm shadow-lg shadow-emerald-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
         >
           <RotateCcw className="w-4 h-4" />
-          <span>{t.playAgain} (10 🪙)</span>
+          <span>{t.playAgain} ({(DIFFICULTY_CONFIG[result.difficulty] || DIFFICULTY_CONFIG.easy).cost} 🪙)</span>
         </button>
 
         <button

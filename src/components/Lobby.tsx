@@ -26,8 +26,9 @@ export const Lobby: React.FC<LobbyProps> = ({
   onPlayPenalty,
 }) => {
   const t = getTranslation(language);
-  const diffConfig = DIFFICULTY_CONFIG[selectedDifficulty];
-  const hasEnoughCoins = user.coins >= 10;
+  const diffConfig = DIFFICULTY_CONFIG[selectedDifficulty] || DIFFICULTY_CONFIG.easy;
+  const userCoins = user?.coins ?? 0;
+  const hasEnoughCoins = userCoins >= (diffConfig?.cost ?? 10);
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8 sm:space-y-10">
@@ -68,18 +69,18 @@ export const Lobby: React.FC<LobbyProps> = ({
           </p>
 
           {/* Quick Economy Banner */}
-          <div className="pt-2 flex flex-wrap items-center gap-4 text-xs font-semibold text-slate-300">
+          <div className="pt-2 flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-300">
             <div className="flex items-center gap-1.5 bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-700/80">
-              <span className="text-slate-400">{t.cost}:</span>
-              <span className="text-amber-400 font-bold tabular-nums">10 {t.coins}</span>
+              <span className="text-emerald-400 font-bold">{language === 'ar' ? 'السهل:' : 'Easy:'}</span>
+              <span className="text-white font-bold tabular-nums">10 🪙 ➔ +20 🪙</span>
             </div>
             <div className="flex items-center gap-1.5 bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-700/80">
-              <span className="text-slate-400">{t.reward}:</span>
-              <span className="text-emerald-400 font-bold tabular-nums">+20 {t.coins}</span>
+              <span className="text-amber-400 font-bold">{language === 'ar' ? 'المتوسط:' : 'Medium:'}</span>
+              <span className="text-white font-bold tabular-nums">20 🪙 ➔ +40 🪙</span>
             </div>
             <div className="flex items-center gap-1.5 bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-700/80">
-              <span className="text-slate-400">{language === 'ar' ? 'المستويات:' : 'Modes:'}</span>
-              <span className="text-cyan-400 font-bold">10 / 20 / 30 Qs</span>
+              <span className="text-rose-400 font-bold">{language === 'ar' ? 'الصعب:' : 'Hard:'}</span>
+              <span className="text-white font-bold tabular-nums">30 🪙 ➔ +60 🪙</span>
             </div>
           </div>
         </div>
@@ -214,8 +215,8 @@ export const Lobby: React.FC<LobbyProps> = ({
               {t.difficultySub.medium}
             </p>
             <div className="flex items-center justify-between text-xs pt-3 border-t border-slate-800">
-              <span className="text-slate-400">{t.cost}: <strong className="text-amber-300">10 🪙</strong></span>
-              <span className="text-slate-400">{t.reward}: <strong className="text-emerald-400">+20 🪙</strong></span>
+              <span className="text-slate-400">{t.cost}: <strong className="text-amber-300">20 🪙</strong></span>
+              <span className="text-slate-400">{t.reward}: <strong className="text-emerald-400">+40 🪙</strong></span>
             </div>
           </button>
 
@@ -244,8 +245,8 @@ export const Lobby: React.FC<LobbyProps> = ({
               {t.difficultySub.hard}
             </p>
             <div className="flex items-center justify-between text-xs pt-3 border-t border-slate-800">
-              <span className="text-slate-400">{t.cost}: <strong className="text-amber-300">10 🪙</strong></span>
-              <span className="text-slate-400">{t.reward}: <strong className="text-emerald-400">+20 🪙</strong></span>
+              <span className="text-slate-400">{t.cost}: <strong className="text-amber-300">30 🪙</strong></span>
+              <span className="text-slate-400">{t.reward}: <strong className="text-emerald-400">+60 🪙</strong></span>
             </div>
           </button>
         </div>
@@ -263,25 +264,25 @@ export const Lobby: React.FC<LobbyProps> = ({
           </div>
           <p className="text-xs text-slate-400">
             {language === 'ar'
-              ? 'رسوم المباراة 10 عملات · مكافأة الفوز 20 عملة تضاف لرصيدك مباشرة'
-              : 'Match entry 10 Coins · Victory reward of 20 Coins added straight to your balance'}
+              ? `رسوم المباراة ${diffConfig.cost} عملات · مكافأة الفوز ${diffConfig.winReward} عملة تضاف لرصيدك`
+              : `Match entry ${diffConfig.cost} Coins · Victory reward of ${diffConfig.winReward} Coins added straight to your balance`}
           </p>
         </div>
 
         <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
           {hasEnoughCoins ? (
             <button
-              onClick={onStartQuiz}
-              className="w-full sm:w-auto px-8 py-3.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black rounded-xl text-base shadow-lg shadow-emerald-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+              onClick={() => onStartQuiz()}
+              className="w-full sm:w-auto px-8 py-3.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black rounded-xl text-base shadow-lg shadow-emerald-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
             >
               <Play className="w-5 h-5 fill-current" />
-              <span>{t.startQuiz}</span>
+              <span>{t.startQuiz} ({diffConfig.cost} {t.coins})</span>
             </button>
           ) : (
             <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
               <div className="flex items-center gap-2 text-rose-400 text-xs font-semibold bg-rose-500/10 px-3 py-2 rounded-lg border border-rose-500/30">
                 <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{t.insufficientCoins}</span>
+                <span>{language === 'ar' ? `تحتاج إلى ${diffConfig.cost} عملات للعب` : `Need ${diffConfig.cost} Coins to Play`}</span>
               </div>
               <button
                 onClick={onPlayPenalty}

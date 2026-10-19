@@ -1,5 +1,16 @@
 import React from 'react';
-import { Trophy, Award, ArrowLeft, ArrowRight, CheckCircle2, Lock, Sparkles } from 'lucide-react';
+import {
+  Trophy,
+  Award,
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  Lock,
+  Sparkles,
+  Coins,
+  Play,
+  Flame,
+} from 'lucide-react';
 import { UserProfile, Language } from '../types/quiz';
 import { getTranslation } from '../data/translations';
 
@@ -7,14 +18,17 @@ interface TrophiesViewProps {
   user: UserProfile;
   language: Language;
   onBackToLobby: () => void;
+  onPlayTrophyMatch: () => void;
 }
 
 export const TrophiesView: React.FC<TrophiesViewProps> = ({
   user,
   language,
   onBackToLobby,
+  onPlayTrophyMatch,
 }) => {
   const t = getTranslation(language);
+  const canAffordTrophyMatch = user.coins >= 150;
 
   const trophiesList = [
     {
@@ -57,6 +71,17 @@ export const TrophiesView: React.FC<TrophiesViewProps> = ({
       unlocked: user.coins >= 150,
       badge: '150+ Coins',
     },
+    {
+      id: 'grand_champion',
+      icon: '👑',
+      title: language === 'ar' ? 'بطل خزانة الكؤوس' : 'Trophy Room Champion',
+      desc:
+        language === 'ar'
+          ? 'الفوز في بطولة خزانة الكؤوس الكبرى (تحدي الـ 150 عملة).'
+          : 'Win the Grand Trophy Room Championship match (150 Coins challenge).',
+      unlocked: user.trophies.includes('grand_champion'),
+      badge: 'Grand Final',
+    },
   ];
 
   const unlockedCount = trophiesList.filter((tr) => tr.unlocked).length;
@@ -82,11 +107,79 @@ export const TrophiesView: React.FC<TrophiesViewProps> = ({
 
         <button
           onClick={onBackToLobby}
-          className="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs sm:text-sm shadow-md active:scale-95 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap"
+          className="px-6 py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs sm:text-sm border border-slate-700 active:scale-95 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap"
         >
           <span>{language === 'ar' ? 'العودة للمباريات' : 'Return to Match Lobby'}</span>
           {language === 'ar' ? <ArrowLeft className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
         </button>
+      </div>
+
+      {/* FEATURED: Play Trophy Room with 150 Coins Challenge */}
+      <div className="relative rounded-2xl border-2 border-amber-500/60 bg-gradient-to-r from-[#1d1708] via-[#151d28] to-[#0d1622] p-6 sm:p-8 shadow-2xl overflow-hidden">
+        {/* Background ambient lighting */}
+        <div className="absolute top-0 right-0 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="relative z-10 flex flex-col md:flex-row items-center gap-6 justify-between">
+          <div className="flex items-center gap-5">
+            <div className="w-24 h-24 rounded-2xl overflow-hidden border-2 border-amber-400 shadow-xl shadow-amber-500/30 shrink-0">
+              <img
+                src="/src/assets/images/zafoot_trophy_cup_1792423866211.jpg"
+                alt="Champions Trophy Cup"
+                referrerPolicy="no-referrer"
+                className="w-full h-full object-cover"
+              />
+            </div>
+
+            <div className="space-y-1 text-center md:text-left">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[11px] font-black uppercase tracking-wider">
+                <Sparkles className="w-3 h-3" />
+                <span>{language === 'ar' ? 'التحدي الأسطوري الكبير' : 'Legendary Cup Match'}</span>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-white">
+                {t.trophyMatchTitle}
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-300 max-w-xl">
+                {t.trophyMatchDesc}
+              </p>
+
+              <div className="pt-2 flex flex-wrap items-center gap-3 text-xs font-semibold">
+                <span className="bg-black/50 border border-slate-700 px-3 py-1 rounded-lg text-slate-300">
+                  {t.cost}: <strong className="text-amber-300">150 🪙</strong>
+                </span>
+                <span className="bg-black/50 border border-slate-700 px-3 py-1 rounded-lg text-slate-300">
+                  {t.reward}: <strong className="text-emerald-400 font-extrabold">+300 🪙</strong>
+                </span>
+                <span className="bg-black/50 border border-slate-700 px-3 py-1 rounded-lg text-slate-300">
+                  {language === 'ar' ? '20 سؤالاً من جميع البطولات' : '20 All-Star Questions'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="shrink-0 w-full md:w-auto">
+            {canAffordTrophyMatch ? (
+              <button
+                onClick={onPlayTrophyMatch}
+                className="w-full md:w-auto px-8 py-4 bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 hover:to-yellow-300 text-slate-950 font-black rounded-xl text-sm sm:text-base shadow-xl shadow-amber-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Play className="w-5 h-5 fill-current" />
+                <span>{t.playTrophyMatch}</span>
+              </button>
+            ) : (
+              <div className="flex flex-col items-center md:items-end gap-2">
+                <div className="text-xs font-bold text-rose-300 bg-rose-500/20 border border-rose-500/40 px-3 py-1.5 rounded-lg">
+                  {t.need150Coins} ({user.coins} / 150 🪙)
+                </div>
+                <div className="w-48 bg-slate-800 h-2 rounded-full overflow-hidden">
+                  <div
+                    className="bg-amber-400 h-full rounded-full transition-all"
+                    style={{ width: `${Math.min(100, (user.coins / 150) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Trophies Grid */}

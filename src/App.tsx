@@ -44,7 +44,20 @@ export default function App() {
   const [user, setUser] = useState<UserProfile | null>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_USER);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            ...parsed,
+            coins: typeof parsed.coins === 'number' ? parsed.coins : 50,
+            trophies: Array.isArray(parsed.trophies) ? parsed.trophies : [],
+            quizzesPlayed: typeof parsed.quizzesPlayed === 'number' ? parsed.quizzesPlayed : 0,
+            quizzesWon: typeof parsed.quizzesWon === 'number' ? parsed.quizzesWon : 0,
+            questionsAnswered: typeof parsed.questionsAnswered === 'number' ? parsed.questionsAnswered : 0,
+            correctAnswers: typeof parsed.correctAnswers === 'number' ? parsed.correctAnswers : 0,
+          };
+        }
+      }
     } catch {
       // default
     }
@@ -107,25 +120,59 @@ export default function App() {
     setUser(newUser);
   };
 
-  // Start a Quiz (Costs 10 Coins)
-  const handleStartQuiz = () => {
-    if (!user || user.coins < 10) return;
+  // Start a Quiz (Easy: 10, Medium: 20, Hard: 30, Trophy Cup: 150 coins)
+  const handleStartQuiz = (overrideDiff?: unknown, overrideCategory?: unknown) => {
+    const validDifficulties: DifficultyLevel[] = ['easy', 'medium', 'hard', 'trophy_cup'];
+    const activeDiff: DifficultyLevel =
+      typeof overrideDiff === 'string' && validDifficulties.includes(overrideDiff as DifficultyLevel)
+        ? (overrideDiff as DifficultyLevel)
+        : (validDifficulties.includes(selectedDifficulty) ? selectedDifficulty : 'easy');
+
+    const validCategories: CategoryId[] = [
+      'champions_league',
+      'laliga',
+      'premier_league',
+      'serie_a',
+      'ligue_1',
+      'world_cup',
+      'trophy_room',
+    ];
+    const activeCat: CategoryId =
+      typeof overrideCategory === 'string' && validCategories.includes(overrideCategory as CategoryId)
+        ? (overrideCategory as CategoryId)
+        : (validCategories.includes(selectedCategory) ? selectedCategory : 'champions_league');
+
+    const diffConfig =
+      (activeDiff && DIFFICULTY_CONFIG[activeDiff]) ||
+      (selectedDifficulty && DIFFICULTY_CONFIG[selectedDifficulty]) ||
+      DIFFICULTY_CONFIG.easy || {
+        questionCount: 10,
+        cost: 10,
+        winReward: 20,
+        passScorePercentage: 0.6,
+        color: 'emerald',
+      };
+
+    if (!user || (user.coins ?? 0) < diffConfig.cost) return;
 
     sounds.playCoin();
 
-    // Deduct 10 coins match fee
+    // Deduct exact match fee (10 for easy, 20 for medium, 30 for hard, 150 for trophy match)
     setUser((prev) => {
       if (!prev) return prev;
       return {
         ...prev,
-        coins: prev.coins - 10,
-        quizzesPlayed: prev.quizzesPlayed + 1,
+        coins: Math.max(0, (prev.coins ?? 0) - diffConfig.cost),
+        quizzesPlayed: (prev.quizzesPlayed ?? 0) + 1,
       };
     });
 
-    // Generate questions according to difficulty (Easy 10, Medium 20, Hard 30)
+    setSelectedDifficulty(activeDiff);
+    setSelectedCategory(activeCat);
+
+    // Generate questions according to difficulty
     // Avoids previously played questions and randomizes option orders (A, B, C, D)
-    const questions = getQuestionsForQuiz(selectedCategory, selectedDifficulty, recentQuestionIds);
+    const questions = getQuestionsForQuiz(activeCat, activeDiff, recentQuestionIds);
     setQuizQuestions(questions);
     setRecentQuestionIds((prev) => {
       const updated = [...prev, ...questions.map((q) => q.id)];
@@ -135,7 +182,7 @@ export default function App() {
     setActiveView('quiz');
   };
 
-  // Finish a Quiz Match (Reward +20 Coins if Win)
+  // Finish a Quiz Match (Easy: +20, Medium: +40, Hard: +60, Trophy Cup: +300 Coins)
   const handleFinishQuiz = (matchStats: {
     correctCount: number;
     wrongCount: number;
@@ -143,9 +190,17 @@ export default function App() {
     answers: { questionId: string; selectedOptionIndex: number; isCorrect: boolean }[];
   }) => {
     const totalQuestions = quizQuestions.length;
-    const diffConfig = DIFFICULTY_CONFIG[selectedDifficulty];
+    const diffConfig =
+      (selectedDifficulty && DIFFICULTY_CONFIG[selectedDifficulty]) ||
+      DIFFICULTY_CONFIG.easy || {
+        questionCount: 10,
+        cost: 10,
+        winReward: 20,
+        passScorePercentage: 0.6,
+        color: 'emerald',
+      };
     const isWin = matchStats.correctCount >= totalQuestions * diffConfig.passScorePercentage;
-    const coinsEarned = isWin ? 20 : 0; // 20 coins reward for winning level!
+    const coinsEarned = isWin ? diffConfig.winReward : 0;
 
     const result: QuizResult = {
       categoryId: selectedCategory,
@@ -171,6 +226,12 @@ export default function App() {
         newTrophies.push('hardcore');
       if (isWin && selectedCategory === 'world_cup' && !newTrophies.includes('world_cup'))
         newTrophies.push('world_cup');
+      if (
+        isWin &&
+        (selectedDifficulty === 'trophy_cup' || selectedCategory === 'trophy_room') &&
+        !newTrophies.includes('grand_champion')
+      )
+        newTrophies.push('grand_champion');
       if (prev.correctAnswers + matchStats.correctCount >= 50 && !newTrophies.includes('centurion'))
         newTrophies.push('centurion');
 
@@ -275,7 +336,7 @@ export default function App() {
                 result={quizResult}
                 questions={quizQuestions}
                 language={settings.language}
-                onPlayAgain={handleStartQuiz}
+                onPlayAgain={() => handleStartQuiz()}
                 onBackToLobby={() => {
                   sounds.playClick();
                   setActiveView('lobby');
@@ -321,6 +382,7 @@ export default function App() {
               sounds.playClick();
               setActiveView('lobby');
             }}
+            onPlayTrophyMatch={() => handleStartQuiz('trophy_cup', 'trophy_room')}
           />
         )}
 
@@ -339,7 +401,7 @@ export default function App() {
               sounds.playClick();
               setSelectedDifficulty(diff);
             }}
-            onStartQuiz={handleStartQuiz}
+            onStartQuiz={() => handleStartQuiz()}
             onPlayPenalty={() => {
               sounds.playClick();
               setActiveView('penalty');
@@ -362,8 +424,8 @@ export default function App() {
           </div>
           <div className="text-slate-500">
             {settings.language === 'ar'
-              ? 'دخول المسابقة: 10 عملات · مكافأة الفوز: 20 عملة'
-              : 'Match Fee: 10 Coins · Victory Bounty: 20 Coins'}
+              ? 'السهل: 10 (فوز +20) · المتوسط: 20 (فوز +40) · الصعب: 30 (فوز +60) · خزانة الكؤوس: 150 (فوز +300)'
+              : 'Easy: 10 (Win +20) · Medium: 20 (Win +40) · Hard: 30 (Win +60) · Trophy Cup: 150 (Win +300)'}
           </div>
         </div>
       </footer>

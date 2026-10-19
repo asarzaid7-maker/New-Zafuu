@@ -4,9 +4,10 @@ export type CategoryId =
   | 'premier_league'
   | 'serie_a'
   | 'ligue_1'
-  | 'world_cup';
+  | 'world_cup'
+  | 'trophy_room';
 
-export type DifficultyLevel = 'easy' | 'medium' | 'hard';
+export type DifficultyLevel = 'easy' | 'medium' | 'hard' | 'trophy_cup';
 
 export type Language = 'en' | 'ar';
 
