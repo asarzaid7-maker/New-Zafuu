@@ -57,6 +57,7 @@ export default function App() {
   const [selectedDifficulty, setSelectedDifficulty] = useState<DifficultyLevel>('easy');
   const [quizQuestions, setQuizQuestions] = useState<Question[]>([]);
   const [quizResult, setQuizResult] = useState<QuizResult | null>(null);
+  const [recentQuestionIds, setRecentQuestionIds] = useState<string[]>([]);
 
   // Modals
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -123,8 +124,13 @@ export default function App() {
     });
 
     // Generate questions according to difficulty (Easy 10, Medium 20, Hard 30)
-    const questions = getQuestionsForQuiz(selectedCategory, selectedDifficulty);
+    // Avoids previously played questions and randomizes option orders (A, B, C, D)
+    const questions = getQuestionsForQuiz(selectedCategory, selectedDifficulty, recentQuestionIds);
     setQuizQuestions(questions);
+    setRecentQuestionIds((prev) => {
+      const updated = [...prev, ...questions.map((q) => q.id)];
+      return updated.slice(-80);
+    });
     setQuizResult(null);
     setActiveView('quiz');
   };

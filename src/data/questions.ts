@@ -1,4 +1,5 @@
 import { CategoryId, DifficultyLevel, Question } from '../types/quiz';
+import { ADDITIONAL_QUESTIONS } from './moreQuestions';
 
 export const ALL_QUESTIONS: Question[] = [
   // ==========================================
@@ -3387,36 +3388,88 @@ export function shuffleArray<T>(array: T[]): T[] {
   return result;
 }
 
-// Retrieves quiz questions for selected category and difficulty
+// Randomizes the 4 option positions (A, B, C, D) for a question and recalculates the correctIndex accordingly
+export function randomizeQuestionOptions(q: Question): Question {
+  const indices = [0, 1, 2, 3];
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+
+  const newOptionsEn = indices.map((i) => q.options.en[i]) as [string, string, string, string];
+  const newOptionsAr = indices.map((i) => q.options.ar[i]) as [string, string, string, string];
+  const newCorrectIndex = indices.indexOf(q.correctIndex);
+
+  return {
+    ...q,
+    options: {
+      en: newOptionsEn,
+      ar: newOptionsAr,
+    },
+    correctIndex: newCorrectIndex,
+  };
+}
+
+// Retrieves quiz questions for selected category and difficulty, avoiding recently seen question IDs
 export function getQuestionsForQuiz(
   categoryId: CategoryId,
-  difficulty: DifficultyLevel
+  difficulty: DifficultyLevel,
+  excludeIds: string[] = []
 ): Question[] {
   const targetCount = DIFFICULTY_CONFIG[difficulty].questionCount;
+  const fullPool = [...ALL_QUESTIONS, ...ADDITIONAL_QUESTIONS];
 
   // Filter pool for this category
-  const categoryPool = ALL_QUESTIONS.filter((q) => q.category === categoryId);
+  const categoryPool = fullPool.filter((q) => q.category === categoryId);
 
-  // Exact match for requested difficulty first
-  const exactMatch = categoryPool.filter((q) => q.difficulty === difficulty);
+  // Divide into unseen and seen
+  const unseenExact = categoryPool.filter(
+    (q) => q.difficulty === difficulty && !excludeIds.includes(q.id)
+  );
+  const seenExact = categoryPool.filter(
+    (q) => q.difficulty === difficulty && excludeIds.includes(q.id)
+  );
 
-  if (exactMatch.length >= targetCount) {
-    return shuffleArray(exactMatch).slice(0, targetCount);
+  let selected: Question[] = [];
+
+  // Prioritize unseen questions of exact difficulty
+  if (unseenExact.length >= targetCount) {
+    selected = shuffleArray(unseenExact).slice(0, targetCount);
+  } else {
+    selected = [...shuffleArray(unseenExact)];
+    const needed = targetCount - selected.length;
+
+    // Next prioritize unseen questions of other difficulties in the same category
+    const unseenOtherDiff = categoryPool.filter(
+      (q) => q.difficulty !== difficulty && !excludeIds.includes(q.id)
+    );
+    selected.push(...shuffleArray(unseenOtherDiff).slice(0, needed));
+
+    // If still needed, fill from seen exact questions
+    if (selected.length < targetCount) {
+      const stillNeeded = targetCount - selected.length;
+      selected.push(...shuffleArray(seenExact).slice(0, stillNeeded));
+    }
+
+    // If still needed, fill from seen other difficulties in this category
+    if (selected.length < targetCount) {
+      const stillNeeded = targetCount - selected.length;
+      const seenOtherDiff = categoryPool.filter(
+        (q) => q.difficulty !== difficulty && excludeIds.includes(q.id)
+      );
+      selected.push(...shuffleArray(seenOtherDiff).slice(0, stillNeeded));
+    }
+
+    // Fallback: fill from general pool if needed
+    if (selected.length < targetCount) {
+      const outside = fullPool.filter((q) => q.category !== categoryId);
+      selected.push(...shuffleArray(outside).slice(0, targetCount - selected.length));
+    }
   }
 
-  // If exact match has fewer than targetCount (e.g. for medium 20 or hard 30),
-  // assemble from categoryPool prioritized by difficulty
-  const remainingNeeded = targetCount - exactMatch.length;
-  const others = categoryPool.filter((q) => q.difficulty !== difficulty);
-  const selected = [...exactMatch, ...shuffleArray(others).slice(0, remainingNeeded)];
-
-  // If still fewer than targetCount (e.g. category pool smaller than 30),
-  // borrow from general pool (e.g., Champions League & World Cup questions)
-  if (selected.length < targetCount) {
-    const outside = ALL_QUESTIONS.filter((q) => q.category !== categoryId);
-    const filler = shuffleArray(outside).slice(0, targetCount - selected.length);
-    selected.push(...filler);
-  }
-
-  return shuffleArray(selected).slice(0, targetCount);
+  // Shuffle the selected questions, and randomize every question's options so correct answer is variable (A, B, C, D)
+  return shuffleArray(selected)
+    .slice(0, targetCount)
+    .map((q) => randomizeQuestionOptions(q));
 }
+
