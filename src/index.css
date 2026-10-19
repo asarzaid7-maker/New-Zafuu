@@ -8,9 +8,6 @@
 
   body {
     font-family: var(--font-sans);
-    background-color: #070d14;
-    color: #f1f5f9;
-    overflow-x: hidden;
   }
 
   [dir="rtl"] body,
@@ -19,18 +16,17 @@
   }
 }
 
-/* Custom dark scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.05);
+  }
 }
-::-webkit-scrollbar-track {
-  background: #0b131e;
-}
-::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+
+.animate-pulseGlow {
+  animation: pulseGlow 4s ease-in-out infinite;
 }

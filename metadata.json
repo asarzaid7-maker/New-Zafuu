@@ -1,6 +1,6 @@
 {
   "name": "ZaFoot - Football Quiz",
-  "description": "Football quiz game testing knowledge across Champions League, La Liga, Premier League, Serie A, Ligue 1, and World Cup with Easy, Medium, and Hard modes.",
+  "description": "Football quiz game testing knowledge across Champions League, La Liga, Premier League, Serie A, Ligue 1, and World Cup with live user counter and Android APK download.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

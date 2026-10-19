@@ -66,11 +66,3 @@ export interface QuizResult {
     isCorrect: boolean;
   }[];
 }
-
-export interface Trophy {
-  id: string;
-  icon: string;
-  title: { en: string; ar: string };
-  description: { en: string; ar: string };
-  unlocked: boolean;
-}
