@@ -142,6 +142,7 @@ interface CoinShopModalProps {
   onClose: () => void;
   language: Language;
   currentCoins: number;
+  userId?: string;
   onPurchaseCoins: (coinsToAdd: number, packName: string) => void;
 }
 
@@ -178,6 +179,7 @@ export const CoinShopModal: React.FC<CoinShopModalProps> = ({
   onClose,
   language,
   currentCoins,
+  userId,
   onPurchaseCoins,
 }) => {
   const [selectedPack, setSelectedPack] = useState<CoinPackage | null>(null);
@@ -291,6 +293,7 @@ export const CoinShopModal: React.FC<CoinShopModalProps> = ({
                   amount: selectedPack.usd,
                   payerEmail: capturedPayerEmail,
                   payerName: capturedPayerName,
+                  userId,
                 }),
               });
               const json = await res.json();
@@ -395,6 +398,7 @@ export const CoinShopModal: React.FC<CoinShopModalProps> = ({
           coins: selectedPack.coins,
           amount: selectedPack.usd,
           token: 'APL_TOK_' + Date.now().toString(36),
+          userId,
         }),
       });
 
@@ -418,6 +422,7 @@ export const CoinShopModal: React.FC<CoinShopModalProps> = ({
           packageId: selectedPack.id,
           coins: selectedPack.coins,
           amount: selectedPack.usd,
+          userId,
         }),
       });
       const json = await res.json();
@@ -476,6 +481,7 @@ export const CoinShopModal: React.FC<CoinShopModalProps> = ({
           last4: cleanCard.slice(-4),
           cardBrand: getCardBrand(cleanCard),
           zip: cardZip.trim(),
+          userId,
         }),
       });
 

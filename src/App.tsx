@@ -18,6 +18,7 @@ import { ProfileModal } from './components/ProfileModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SignInModal } from './components/SignInModal';
 import { TrophiesView } from './components/TrophiesView';
+import { HairGame } from './components/HairGame';
 import { sounds } from './utils/audio';
 
 const STORAGE_KEY_USER = 'zafoot_user_profile_v1';
@@ -64,7 +65,7 @@ export default function App() {
   });
 
   // Navigation & Game State
-  const [activeView, setActiveView] = useState<'lobby' | 'quiz' | 'trophies'>('lobby');
+  const [activeView, setActiveView] = useState<'lobby' | 'quiz' | 'trophies' | 'hairGame'>('lobby');
   const [selectedCategory, setSelectedCategory] = useState<CategoryId>('champions_league');
   const [selectedDifficulty, setSelectedDifficulty] = useState<DifficultyLevel>('easy');
   const [quizQuestions, setQuizQuestions] = useState<Question[]>([]);
@@ -299,7 +300,7 @@ export default function App() {
         language={settings.language}
         onLanguageChange={(lang) => setSettings((s) => ({ ...s, language: lang }))}
         user={user}
-        activeView={activeView === 'trophies' ? 'trophies' : 'lobby'}
+        activeView={activeView === 'quiz' ? 'lobby' : activeView}
         onNavigate={(view) => {
           sounds.playClick();
           setActiveView(view);
@@ -347,6 +348,22 @@ export default function App() {
           </>
         )}
 
+        {/* Guess Player by Their Hair View */}
+        {activeView === 'hairGame' && (
+          <HairGame
+            language={settings.language}
+            user={user}
+            onUpdateCoins={(newCoins) => {
+              setUser((prev) => (prev ? { ...prev, coins: newCoins } : prev));
+            }}
+            onBackToLobby={() => {
+              sounds.playClick();
+              setActiveView('lobby');
+            }}
+            onOpenCoinShop={() => setIsCoinShopOpen(true)}
+          />
+        )}
+
         {/* Trophy Room View */}
         {activeView === 'trophies' && (
           <TrophiesView
@@ -377,6 +394,10 @@ export default function App() {
             }}
             onStartQuiz={() => handleStartQuiz()}
             onOpenCoinShop={() => setIsCoinShopOpen(true)}
+            onPlayHairGame={() => {
+              sounds.playClick();
+              setActiveView('hairGame');
+            }}
           />
         )}
       </main>
@@ -432,6 +453,7 @@ export default function App() {
         onClose={() => setIsCoinShopOpen(false)}
         language={settings.language}
         currentCoins={user.coins}
+        userId={user.id}
         onPurchaseCoins={handlePurchaseCoins}
       />
     </div>

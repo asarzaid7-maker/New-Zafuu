@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Trophy, Settings, Coins, Gift, Download } from 'lucide-react';
+import { Trophy, Settings, Coins, Gift, Download, Scissors } from 'lucide-react';
 import { Language, UserProfile } from '../types/quiz';
 import { getTranslation } from '../data/translations';
 import { AVATAR_OPTIONS } from '../data/avatars';
@@ -9,8 +9,8 @@ interface NavbarProps {
   language: Language;
   onLanguageChange: (lang: Language) => void;
   user: UserProfile;
-  activeView: 'lobby' | 'trophies';
-  onNavigate: (view: 'lobby' | 'trophies') => void;
+  activeView: 'lobby' | 'trophies' | 'hairGame';
+  onNavigate: (view: 'lobby' | 'trophies' | 'hairGame') => void;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   onClaimDailyBonus: () => void;
@@ -70,6 +70,22 @@ export const Navbar: React.FC<NavbarProps> = ({
             }`}
           >
             {t.play}
+          </button>
+
+          {/* New Guess the Player by Hair Game Link */}
+          <button
+            onClick={() => onNavigate('hairGame')}
+            className={`flex items-center gap-1.5 whitespace-nowrap pb-0.5 border-b-2 transition-colors ${
+              activeView === 'hairGame'
+                ? 'border-amber-400 text-white font-semibold'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Scissors className="w-4 h-4 text-amber-400" />
+            <span>{language === 'ar' ? 'خمّن الشعر' : 'Hair Challenge'}</span>
+            <span className="text-[10px] bg-amber-500 text-slate-950 font-black px-1.5 py-0.2 rounded-full uppercase">
+              New
+            </span>
           </button>
 
           <button
@@ -177,6 +193,14 @@ export const Navbar: React.FC<NavbarProps> = ({
           }`}
         >
           <span>⚽</span> {t.play}
+        </button>
+        <button
+          onClick={() => onNavigate('hairGame')}
+          className={`flex items-center gap-1 font-semibold ${
+            activeView === 'hairGame' ? 'text-amber-400' : 'text-slate-400'
+          }`}
+        >
+          <Scissors className="w-3.5 h-3.5 text-amber-400" /> {language === 'ar' ? 'الشعر' : 'Hair'}
         </button>
         <button
           onClick={onOpenCoinShop}

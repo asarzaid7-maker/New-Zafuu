@@ -13,6 +13,7 @@ interface LobbyProps {
   onSelectDifficulty: (diff: DifficultyLevel) => void;
   onStartQuiz: () => void;
   onOpenCoinShop: () => void;
+  onPlayHairGame: () => void;
 }
 
 export const Lobby: React.FC<LobbyProps> = ({
@@ -24,6 +25,7 @@ export const Lobby: React.FC<LobbyProps> = ({
   onSelectDifficulty,
   onStartQuiz,
   onOpenCoinShop,
+  onPlayHairGame,
 }) => {
   const t = getTranslation(language);
   const diffConfig = DIFFICULTY_CONFIG[selectedDifficulty] || DIFFICULTY_CONFIG.easy;
@@ -78,15 +80,58 @@ export const Lobby: React.FC<LobbyProps> = ({
             </div>
 
             <button
-              onClick={onOpenCoinShop}
-              className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 px-3.5 py-1.5 rounded-lg text-xs font-black shadow-md shadow-amber-500/20 active:scale-95 transition-all cursor-pointer ml-auto"
+              onClick={onPlayHairGame}
+              className="flex items-center gap-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 px-3.5 py-1.5 rounded-lg text-xs font-black shadow-md shadow-amber-500/20 active:scale-95 transition-all cursor-pointer ml-auto"
             >
-              <Coins className="w-3.5 h-3.5" />
-              <span>{language === 'ar' ? 'متجر العملات ➔' : 'Buy Coins ➔'}</span>
+              <span>✂️</span>
+              <span>{language === 'ar' ? 'تحدي الشعر (1,000 🪙) ➔' : 'Hair Challenge (1,000 🪙) ➔'}</span>
             </button>
           </div>
         </div>
       </div>
+
+      {/* Featured Special Mode: Guess Player by Their Hair */}
+      <section className="relative rounded-2xl overflow-hidden border border-amber-500/40 bg-gradient-to-r from-[#181a13] via-[#0e1620] to-[#0a121d] p-5 sm:p-7 shadow-xl">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+          <div className="flex items-start gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-slate-950 font-black text-2xl shadow-lg shadow-amber-500/25 shrink-0">
+              ✂️
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-black uppercase tracking-wider">
+                  {language === 'ar' ? 'نمط جديد كلياً' : 'Brand New Game Mode'}
+                </span>
+                <span className="text-xs text-slate-400 font-semibold">
+                  {language === 'ar' ? 'الدوريات الخمس الكبرى' : 'Top 5 European Leagues'}
+                </span>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                {language === 'ar' ? 'خمّن اللاعب من شعره' : 'Guess the Player by Their Hair'}
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-300 max-w-xl leading-relaxed">
+                {language === 'ar'
+                  ? 'نعرض لك صورة مقصوصة لشعر اللاعب فقط مع حجب وجهه. هل تستطيع معرفة النجم من بين 4 خيارات؟ الدخول بـ 500 عملة والفوز بـ 1,000 عملة!'
+                  : 'We show you only a cropped photo of the player’s hair with their face obscured. Can you identify the football star among 4 choices? Entry: 500 Coins · Win: 1,000 Coins!'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto shrink-0">
+            <div className="text-center md:text-right hidden sm:block">
+              <div className="text-xs font-bold text-slate-400">{language === 'ar' ? 'المكافأة' : 'Bounty Reward'}</div>
+              <div className="text-lg font-black text-emerald-400 tabular-nums">+1,000 🪙</div>
+            </div>
+            <button
+              onClick={onPlayHairGame}
+              className="w-full sm:w-auto px-6 py-3.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black rounded-xl text-sm shadow-lg shadow-amber-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+            >
+              <span>✂️</span>
+              <span>{language === 'ar' ? 'العب تحدي الشعر الآن ➔' : 'Play Hair Challenge ➔'}</span>
+            </button>
+          </div>
+        </div>
+      </section>
 
       {/* 1. Category Selection Section */}
       <section className="space-y-4">
