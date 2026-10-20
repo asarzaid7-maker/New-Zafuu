@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Coins, Sparkles, User, CheckCircle, Download, Users, Smartphone } from 'lucide-react';
+import React, { useState } from 'react';
+import { Coins, Sparkles, User, CheckCircle, Smartphone, Download } from 'lucide-react';
 import { Language } from '../types/quiz';
 import { AVATAR_OPTIONS } from '../data/avatars';
 import { getTranslation } from '../data/translations';
@@ -15,45 +15,7 @@ export const SignInModal: React.FC<SignInModalProps> = ({ language, onSignIn }) 
   const t = getTranslation(language);
   const [name, setName] = useState('');
   const [selectedAvatar, setSelectedAvatar] = useState('striker');
-  const [userCount, setUserCount] = useState<number>(144);
   const [showApkModal, setShowApkModal] = useState(false);
-
-  // Live user counter subscription
-  useEffect(() => {
-    let eventSource: EventSource | null = null;
-
-    // Fetch initial count
-    fetch('/api/users/count')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data?.count) setUserCount(data.count);
-      })
-      .catch(() => {
-        // Fallback gracefully
-      });
-
-    // Subscribe to SSE real-time stream if available
-    try {
-      eventSource = new EventSource('/api/users/stream');
-      eventSource.addEventListener('user_count', (e: MessageEvent) => {
-        try {
-          const data = JSON.parse(e.data);
-          if (data?.count) setUserCount(data.count);
-        } catch {
-          // parse error
-        }
-      });
-      eventSource.onerror = () => {
-        eventSource?.close();
-      };
-    } catch {
-      // ignore
-    }
-
-    return () => {
-      eventSource?.close();
-    };
-  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,21 +40,12 @@ export const SignInModal: React.FC<SignInModalProps> = ({ language, onSignIn }) 
         {/* Pitch light banner */}
         <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-emerald-500 via-teal-400 to-amber-400" />
 
-        {/* Live Users Counter Badge */}
-        <div className="flex items-center justify-between text-xs pt-1">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
-            <Users className="w-3.5 h-3.5" />
-            <span>
-              {language === 'ar' ? 'المدربون النشطون:' : 'Active Managers:'}{' '}
-              <strong className="text-white tabular-nums">{userCount}</strong>
-            </span>
-          </div>
-
+        {/* Top Header Actions (APK Download) */}
+        <div className="flex items-center justify-end text-xs pt-1">
           <button
             type="button"
             onClick={() => setShowApkModal(true)}
-            className="inline-flex items-center gap-1.5 text-xs text-slate-300 hover:text-emerald-400 bg-slate-800/80 hover:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 text-xs text-slate-300 hover:text-emerald-400 bg-slate-800/80 hover:bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700 transition-colors cursor-pointer"
             title="Download Android APK"
           >
             <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
@@ -101,16 +54,22 @@ export const SignInModal: React.FC<SignInModalProps> = ({ language, onSignIn }) 
         </div>
 
         {/* Header with App Logo & Welcome */}
-        <div className="text-center space-y-1.5">
-          <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center text-3xl shadow-xl shadow-emerald-500/25">
-            ⚽
+        <div className="text-center space-y-2.5">
+          <div className="w-20 h-20 mx-auto rounded-2xl overflow-hidden border-2 border-emerald-500/40 shadow-xl shadow-emerald-500/25 bg-[#080f18] group hover:scale-105 transition-transform">
+            <img
+              src="/assets/aistudio/360_F_332687153_gmsohq86koOEWFYlYSI3N6xzb1zIcG88_cb9e53eb.jpg"
+              alt="ZaFoot Logo"
+              className="w-full h-full object-cover"
+            />
           </div>
-          <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-            {t.welcomeTitle}
-          </h1>
-          <p className="text-xs sm:text-sm text-slate-300">
-            {t.welcomeSubtitle}
-          </p>
+          <div className="space-y-1">
+            <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+              {t.welcomeTitle}
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-300">
+              {t.welcomeSubtitle}
+            </p>
+          </div>
         </div>
 
         {/* 50 Coins Starter Gift Badge */}

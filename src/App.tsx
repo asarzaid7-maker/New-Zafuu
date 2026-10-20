@@ -414,7 +414,12 @@ export default function App() {
       <footer className="border-t border-slate-800/80 bg-[#060b11] py-4 px-6 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-slate-400">ZaFoot</span>
+            <img
+              src="/assets/aistudio/360_F_332687153_gmsohq86koOEWFYlYSI3N6xzb1zIcG88_cb9e53eb.jpg"
+              alt="ZaFoot Logo"
+              className="w-5 h-5 rounded-md object-cover border border-slate-700/80 inline-block"
+            />
+            <span className="font-bold text-slate-300">ZaFoot</span>
             <span>·</span>
             <span>
               {settings.language === 'ar'

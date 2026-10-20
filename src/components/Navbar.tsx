@@ -35,13 +35,17 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header className="sticky top-0 z-40 bg-[#070d14]/90 backdrop-blur-md border-b border-slate-800/80 px-4 sm:px-6 py-3 transition-colors">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-4 md:gap-8">
-        {/* Zone 1: Brand Wordmark */}
+        {/* Zone 1: Brand Wordmark & Logo */}
         <button
           onClick={() => onNavigate('lobby')}
-          className="flex items-center gap-2.5 text-left focus:outline-none group shrink-0"
+          className="flex items-center gap-3 text-left focus:outline-none group shrink-0"
         >
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center shadow-lg shadow-emerald-500/20 group-hover:scale-105 transition-transform">
-            <span className="text-xl">⚽</span>
+          <div className="w-10 h-10 rounded-xl overflow-hidden border border-emerald-500/30 shadow-lg shadow-emerald-500/20 group-hover:scale-105 transition-transform bg-[#09111c] shrink-0">
+            <img
+              src="/assets/aistudio/360_F_332687153_gmsohq86koOEWFYlYSI3N6xzb1zIcG88_cb9e53eb.jpg"
+              alt="ZaFoot Logo"
+              className="w-full h-full object-cover"
+            />
           </div>
           <div className="flex flex-col">
             <span className="text-xl font-black tracking-tight text-white group-hover:text-emerald-400 transition-colors">

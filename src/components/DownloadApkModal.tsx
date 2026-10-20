@@ -36,8 +36,12 @@ export const DownloadApkModal: React.FC<DownloadApkModalProps> = ({ language, on
 
         {/* Header */}
         <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-lg shrink-0">
-            <Smartphone className="w-8 h-8" />
+          <div className="w-14 h-14 rounded-2xl overflow-hidden border border-emerald-500/40 shadow-lg shadow-emerald-500/20 shrink-0 bg-[#080e16]">
+            <img
+              src="/assets/aistudio/360_F_332687153_gmsohq86koOEWFYlYSI3N6xzb1zIcG88_cb9e53eb.jpg"
+              alt="ZaFoot Logo"
+              className="w-full h-full object-cover"
+            />
           </div>
           <div>
             <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 text-[10px] font-black uppercase tracking-wider mb-1">

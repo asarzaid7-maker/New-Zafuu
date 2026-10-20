@@ -82,6 +82,14 @@ export const Lobby: React.FC<LobbyProps> = ({
               <span className="text-rose-400 font-bold">{language === 'ar' ? 'الصعب:' : 'Hard:'}</span>
               <span className="text-white font-bold tabular-nums">30 🪙 ➔ +60 🪙</span>
             </div>
+
+            <button
+              onClick={onPlayPenalty}
+              className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 px-4 py-1.5 rounded-lg text-xs font-black shadow-md shadow-emerald-500/20 active:scale-95 transition-all cursor-pointer ml-auto"
+            >
+              <span>🎯</span>
+              <span>{language === 'ar' ? 'ركلات الترجيح في البرنابيو ➔' : 'Bernabéu Penalty Shootout ➔'}</span>
+            </button>
           </div>
         </div>
       </div>
