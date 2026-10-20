@@ -12,7 +12,7 @@ interface LobbyProps {
   selectedDifficulty: DifficultyLevel;
   onSelectDifficulty: (diff: DifficultyLevel) => void;
   onStartQuiz: () => void;
-  onPlayPenalty: () => void;
+  onOpenCoinShop: () => void;
 }
 
 export const Lobby: React.FC<LobbyProps> = ({
@@ -23,7 +23,7 @@ export const Lobby: React.FC<LobbyProps> = ({
   selectedDifficulty,
   onSelectDifficulty,
   onStartQuiz,
-  onPlayPenalty,
+  onOpenCoinShop,
 }) => {
   const t = getTranslation(language);
   const diffConfig = DIFFICULTY_CONFIG[selectedDifficulty] || DIFFICULTY_CONFIG.easy;
@@ -32,19 +32,13 @@ export const Lobby: React.FC<LobbyProps> = ({
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8 sm:space-y-10">
-      {/* Hero Showcase Area with Generated Stadium Art */}
-      <div className="relative rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-[#0a121d]">
-        <div className="absolute inset-0 z-0">
-          <img
-            src="/src/assets/images/zafoot_hero_stadium_1792423849836.jpg"
-            alt="Football Stadium"
-            referrerPolicy="no-referrer"
-            className="w-full h-full object-cover object-center opacity-40 scale-105 transform hover:scale-100 transition-transform duration-1000"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-[#070d14] via-[#070d14]/75 to-transparent" />
-        </div>
+      {/* Hero Showcase Area (No Picture) */}
+      <div className="relative rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-gradient-to-br from-[#0c1828] via-[#08101a] to-[#04080e] p-6 sm:p-10 lg:p-12">
+        {/* Subtle decorative stadium pitch radial lights */}
+        <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-0 left-0 w-80 h-80 bg-amber-500/5 rounded-full blur-3xl pointer-events-none" />
 
-        <div className="relative z-10 p-6 sm:p-10 lg:p-12 max-w-3xl space-y-4">
+        <div className="relative z-10 max-w-3xl space-y-4">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-bold tracking-wide">
             <Sparkles className="w-3.5 h-3.5" />
             <span>{t.tagline}</span>
@@ -84,11 +78,11 @@ export const Lobby: React.FC<LobbyProps> = ({
             </div>
 
             <button
-              onClick={onPlayPenalty}
-              className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 px-4 py-1.5 rounded-lg text-xs font-black shadow-md shadow-emerald-500/20 active:scale-95 transition-all cursor-pointer ml-auto"
+              onClick={onOpenCoinShop}
+              className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 px-3.5 py-1.5 rounded-lg text-xs font-black shadow-md shadow-amber-500/20 active:scale-95 transition-all cursor-pointer ml-auto"
             >
-              <span>🎯</span>
-              <span>{language === 'ar' ? 'ركلات الترجيح في البرنابيو ➔' : 'Bernabéu Penalty Shootout ➔'}</span>
+              <Coins className="w-3.5 h-3.5" />
+              <span>{language === 'ar' ? 'متجر العملات ➔' : 'Buy Coins ➔'}</span>
             </button>
           </div>
         </div>
@@ -293,11 +287,11 @@ export const Lobby: React.FC<LobbyProps> = ({
                 <span>{language === 'ar' ? `تحتاج إلى ${diffConfig.cost} عملات للعب` : `Need ${diffConfig.cost} Coins to Play`}</span>
               </div>
               <button
-                onClick={onPlayPenalty}
-                className="w-full sm:w-auto px-6 py-3.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-sm shadow-lg shadow-amber-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+                onClick={onOpenCoinShop}
+                className="w-full sm:w-auto px-6 py-3.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black rounded-xl text-sm shadow-lg shadow-amber-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
               >
-                <span>🎯</span>
-                <span>{language === 'ar' ? 'العب ركلات الترجيح لربح عملات!' : 'Play Shootout for Coins!'}</span>
+                <Coins className="w-4 h-4" />
+                <span>{language === 'ar' ? 'شراء عملات للدخول' : 'Buy Coins to Enter'}</span>
               </button>
             </div>
           )}

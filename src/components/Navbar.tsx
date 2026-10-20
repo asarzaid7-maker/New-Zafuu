@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Trophy, Settings, User, Coins, Target, Gift, Download } from 'lucide-react';
+import { Trophy, Settings, Coins, Gift, Download } from 'lucide-react';
 import { Language, UserProfile } from '../types/quiz';
 import { getTranslation } from '../data/translations';
 import { AVATAR_OPTIONS } from '../data/avatars';
@@ -9,11 +9,12 @@ interface NavbarProps {
   language: Language;
   onLanguageChange: (lang: Language) => void;
   user: UserProfile;
-  activeView: 'lobby' | 'penalty' | 'trophies';
-  onNavigate: (view: 'lobby' | 'penalty' | 'trophies') => void;
+  activeView: 'lobby' | 'trophies';
+  onNavigate: (view: 'lobby' | 'trophies') => void;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   onClaimDailyBonus: () => void;
+  onOpenCoinShop: () => void;
   canClaimBonus: boolean;
 }
 
@@ -26,6 +27,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenProfile,
   onOpenSettings,
   onClaimDailyBonus,
+  onOpenCoinShop,
   canClaimBonus,
 }) => {
   const t = getTranslation(language);
@@ -71,18 +73,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
 
           <button
-            onClick={() => onNavigate('penalty')}
-            className={`flex items-center gap-1.5 whitespace-nowrap pb-0.5 border-b-2 transition-colors ${
-              activeView === 'penalty'
-                ? 'border-emerald-400 text-white font-semibold'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Target className="w-4 h-4 text-emerald-400" />
-            <span>{t.getFreeCoins}</span>
-          </button>
-
-          <button
             onClick={() => onNavigate('trophies')}
             className={`flex items-center gap-1.5 whitespace-nowrap pb-0.5 border-b-2 transition-colors ${
               activeView === 'trophies'
@@ -92,6 +82,14 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Trophy className="w-4 h-4 text-amber-400" />
             <span>{t.leaderboard}</span>
+          </button>
+
+          <button
+            onClick={onOpenCoinShop}
+            className="flex items-center gap-1.5 whitespace-nowrap pb-0.5 border-b-2 border-transparent text-amber-300 hover:text-amber-200 transition-colors font-semibold"
+          >
+            <Coins className="w-4 h-4 text-amber-400" />
+            <span>{language === 'ar' ? 'متجر العملات' : 'Coin Shop'}</span>
           </button>
 
           {canClaimBonus && (
@@ -107,20 +105,24 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Zone 3: Actions (Coins, Language, Profile, Settings) */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          {/* Coins Badge */}
-          <div
-            onClick={() => onNavigate('penalty')}
-            title="Click to earn more coins in Penalty Shootout!"
-            className="flex items-center gap-1.5 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 px-3 py-1.5 rounded-lg cursor-pointer transition-all active:scale-95 shadow-sm"
+          {/* Coins Badge / Button to Buy Coins */}
+          <button
+            onClick={onOpenCoinShop}
+            type="button"
+            title={language === 'ar' ? 'انقر لشراء العملات (1000، 5000، 10000)' : 'Click to buy coins (1000, 5000, 10000)'}
+            className="flex items-center gap-1.5 bg-gradient-to-r from-amber-500/20 to-amber-500/10 hover:from-amber-500/30 hover:to-amber-500/20 border border-amber-500/50 hover:border-amber-400 text-amber-300 px-3 py-1.5 rounded-lg cursor-pointer transition-all active:scale-95 shadow-sm group"
           >
-            <Coins className="w-4 h-4 text-amber-400" />
+            <Coins className="w-4 h-4 text-amber-400 group-hover:rotate-12 transition-transform shrink-0" />
             <span className="text-sm font-extrabold tabular-nums tracking-tight text-white">
-              {user.coins}
+              {user.coins.toLocaleString()}
             </span>
             <span className="text-xs text-amber-300/80 hidden sm:inline font-medium">
               {t.coins}
             </span>
-          </div>
+            <span className="ml-0.5 text-[11px] font-black bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded-md leading-tight shrink-0 shadow-sm">
+              +
+            </span>
+          </button>
 
           {/* Quick Language Toggle */}
           <button
@@ -177,12 +179,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           <span>⚽</span> {t.play}
         </button>
         <button
-          onClick={() => onNavigate('penalty')}
-          className={`flex items-center gap-1 font-semibold ${
-            activeView === 'penalty' ? 'text-emerald-400' : 'text-slate-400'
-          }`}
+          onClick={onOpenCoinShop}
+          className="flex items-center gap-1 font-semibold text-amber-300"
         >
-          <Target className="w-3.5 h-3.5 text-emerald-400" /> {t.getFreeCoins}
+          <Coins className="w-3.5 h-3.5 text-amber-400" /> {language === 'ar' ? 'المتجر' : 'Shop'}
         </button>
         <button
           onClick={() => onNavigate('trophies')}

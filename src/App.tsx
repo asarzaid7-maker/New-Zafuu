@@ -13,7 +13,7 @@ import { Navbar } from './components/Navbar';
 import { Lobby } from './components/Lobby';
 import { QuizPlay } from './components/QuizPlay';
 import { ResultModal } from './components/ResultModal';
-import { PenaltyMiniGame } from './components/PenaltyMiniGame';
+import { CoinShopModal } from './components/CoinShopModal';
 import { ProfileModal } from './components/ProfileModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SignInModal } from './components/SignInModal';
@@ -46,10 +46,9 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEY_USER);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === 'object') {
+        if (parsed && typeof parsed.coins === 'number') {
           return {
             ...parsed,
-            coins: typeof parsed.coins === 'number' ? parsed.coins : 50,
             trophies: Array.isArray(parsed.trophies) ? parsed.trophies : [],
             quizzesPlayed: typeof parsed.quizzesPlayed === 'number' ? parsed.quizzesPlayed : 0,
             quizzesWon: typeof parsed.quizzesWon === 'number' ? parsed.quizzesWon : 0,
@@ -65,7 +64,7 @@ export default function App() {
   });
 
   // Navigation & Game State
-  const [activeView, setActiveView] = useState<'lobby' | 'quiz' | 'penalty' | 'trophies'>('lobby');
+  const [activeView, setActiveView] = useState<'lobby' | 'quiz' | 'trophies'>('lobby');
   const [selectedCategory, setSelectedCategory] = useState<CategoryId>('champions_league');
   const [selectedDifficulty, setSelectedDifficulty] = useState<DifficultyLevel>('easy');
   const [quizQuestions, setQuizQuestions] = useState<Question[]>([]);
@@ -75,6 +74,7 @@ export default function App() {
   // Modals
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isCoinShopOpen, setIsCoinShopOpen] = useState(false);
 
   // Sync RTL and lang attribute
   useEffect(() => {
@@ -120,69 +120,46 @@ export default function App() {
     setUser(newUser);
   };
 
-  // Start a Quiz (Easy: 10, Medium: 20, Hard: 30, Trophy Cup: 150 coins)
-  const handleStartQuiz = (overrideDiff?: unknown, overrideCategory?: unknown) => {
-    const validDifficulties: DifficultyLevel[] = ['easy', 'medium', 'hard', 'trophy_cup'];
-    const activeDiff: DifficultyLevel =
-      typeof overrideDiff === 'string' && validDifficulties.includes(overrideDiff as DifficultyLevel)
-        ? (overrideDiff as DifficultyLevel)
-        : (validDifficulties.includes(selectedDifficulty) ? selectedDifficulty : 'easy');
+  // Start a Quiz Match
+  const handleStartQuiz = (overrideDiff?: DifficultyLevel, overrideCat?: CategoryId) => {
+    if (!user) return;
+    const diffToUse = overrideDiff || selectedDifficulty;
+    const catToUse = overrideCat || selectedCategory;
 
-    const validCategories: CategoryId[] = [
-      'champions_league',
-      'laliga',
-      'premier_league',
-      'serie_a',
-      'ligue_1',
-      'world_cup',
-      'trophy_room',
-    ];
-    const activeCat: CategoryId =
-      typeof overrideCategory === 'string' && validCategories.includes(overrideCategory as CategoryId)
-        ? (overrideCategory as CategoryId)
-        : (validCategories.includes(selectedCategory) ? selectedCategory : 'champions_league');
+    const diffConfig = DIFFICULTY_CONFIG[diffToUse] || DIFFICULTY_CONFIG.easy;
+    const entryCost = diffConfig.cost;
 
-    const diffConfig =
-      (activeDiff && DIFFICULTY_CONFIG[activeDiff]) ||
-      (selectedDifficulty && DIFFICULTY_CONFIG[selectedDifficulty]) ||
-      DIFFICULTY_CONFIG.easy || {
-        questionCount: 10,
-        cost: 10,
-        winReward: 20,
-        passScorePercentage: 0.6,
-        color: 'emerald',
-      };
+    // Check if player has enough coins
+    if (user.coins < entryCost) {
+      sounds.playWrong();
+      setIsCoinShopOpen(true);
+      return;
+    }
 
-    if (!user || (user.coins ?? 0) < diffConfig.cost) return;
-
-    sounds.playCoin();
-
-    // Deduct exact match fee (10 for easy, 20 for medium, 30 for hard, 150 for trophy match)
+    // Deduct coins entry fee
     setUser((prev) => {
       if (!prev) return prev;
       return {
         ...prev,
-        coins: Math.max(0, (prev.coins ?? 0) - diffConfig.cost),
-        quizzesPlayed: (prev.quizzesPlayed ?? 0) + 1,
+        coins: prev.coins - entryCost,
+        quizzesPlayed: prev.quizzesPlayed + 1,
       };
     });
 
-    setSelectedDifficulty(activeDiff);
-    setSelectedCategory(activeCat);
-
-    // Generate questions according to difficulty
-    // Avoids previously played questions and randomizes option orders (A, B, C, D)
-    const questions = getQuestionsForQuiz(activeCat, activeDiff, recentQuestionIds);
+    // Retrieve fresh questions
+    const questions = getQuestionsForQuiz(catToUse, diffToUse, recentQuestionIds);
     setQuizQuestions(questions);
-    setRecentQuestionIds((prev) => {
-      const updated = [...prev, ...questions.map((q) => q.id)];
-      return updated.slice(-80);
-    });
+
+    // Save recent questions to avoid immediate repetition
+    const newIds = questions.map((q) => q.id);
+    setRecentQuestionIds((prev) => [...newIds, ...prev].slice(0, 80));
+
     setQuizResult(null);
     setActiveView('quiz');
+    sounds.playWhistle();
   };
 
-  // Finish a Quiz Match (Easy: +20, Medium: +40, Hard: +60, Trophy Cup: +300 Coins)
+  // Finish a Quiz Match
   const handleFinishQuiz = (matchStats: {
     correctCount: number;
     wrongCount: number;
@@ -191,7 +168,7 @@ export default function App() {
   }) => {
     const totalQuestions = quizQuestions.length;
     const diffConfig =
-      (selectedDifficulty && DIFFICULTY_CONFIG[selectedDifficulty]) ||
+      DIFFICULTY_CONFIG[selectedDifficulty] ||
       DIFFICULTY_CONFIG.easy || {
         questionCount: 10,
         cost: 10,
@@ -249,14 +226,19 @@ export default function App() {
     });
   };
 
-  // Earn Coins from Shootout mini game
-  const handleEarnCoins = (amount: number) => {
-    sounds.playCoin();
+  // Purchase Coins from Coin Shop (1000 for $9.99, 5000 for $30.99, 10000 for $70.99)
+  const handlePurchaseCoins = (amount: number, _packName: string) => {
     setUser((prev) => {
       if (!prev) return prev;
+      const updatedCoins = prev.coins + amount;
+      const newTrophies = [...prev.trophies];
+      if (updatedCoins >= 150 && !newTrophies.includes('wealth')) {
+        newTrophies.push('wealth');
+      }
       return {
         ...prev,
-        coins: prev.coins + amount,
+        coins: updatedCoins,
+        trophies: newTrophies,
       };
     });
   };
@@ -278,27 +260,30 @@ export default function App() {
     });
   };
 
-  // Reset Account back to 50 coins
+  // Reset Account handler
   const handleResetAccount = () => {
-    if (!user) return;
-    sounds.playClick();
-    const resetUser: UserProfile = {
-      ...user,
+    const freshUser: UserProfile = {
+      id: 'player_' + Date.now(),
+      username: user?.username || 'Manager',
+      avatar: user?.avatar || 'striker',
       coins: 50,
       quizzesPlayed: 0,
       quizzesWon: 0,
       questionsAnswered: 0,
       correctAnswers: 0,
       trophies: [],
+      createdDate: new Date().toISOString(),
     };
-    setUser(resetUser);
-    setIsSettingsOpen(false);
+    setUser(freshUser);
+    setActiveView('lobby');
+    setQuizResult(null);
+    sounds.playClick();
   };
 
-  // If user is not yet signed in, display the initial 50 coins welcome modal
+  // If user hasn't created profile, show initial sign-in modal
   if (!user) {
     return (
-      <div className="min-h-screen bg-[#070d14] text-slate-100 flex flex-col justify-between">
+      <div className="min-h-screen bg-[#070d14] text-slate-100 flex items-center justify-center p-4">
         <SignInModal
           language={settings.language}
           onSignIn={handleSignIn}
@@ -308,13 +293,13 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#070d14] text-slate-100 flex flex-col selection:bg-emerald-500 selection:text-slate-950 font-sans">
-      {/* Top Bar */}
+    <div className="min-h-screen bg-[#070d14] text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-slate-950">
+      {/* Top Navigation Bar */}
       <Navbar
         language={settings.language}
         onLanguageChange={(lang) => setSettings((s) => ({ ...s, language: lang }))}
         user={user}
-        activeView={activeView === 'quiz' ? 'lobby' : activeView}
+        activeView={activeView === 'trophies' ? 'trophies' : 'lobby'}
         onNavigate={(view) => {
           sounds.playClick();
           setActiveView(view);
@@ -323,6 +308,7 @@ export default function App() {
         onOpenProfile={() => setIsProfileOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onClaimDailyBonus={handleClaimDailyBonus}
+        onOpenCoinShop={() => setIsCoinShopOpen(true)}
         canClaimBonus={canClaimBonus}
       />
 
@@ -361,18 +347,6 @@ export default function App() {
           </>
         )}
 
-        {/* Penalty Shootout Mini-Game View */}
-        {activeView === 'penalty' && (
-          <PenaltyMiniGame
-            language={settings.language}
-            onEarnCoins={handleEarnCoins}
-            onBackToLobby={() => {
-              sounds.playClick();
-              setActiveView('lobby');
-            }}
-          />
-        )}
-
         {/* Trophy Room View */}
         {activeView === 'trophies' && (
           <TrophiesView
@@ -402,10 +376,7 @@ export default function App() {
               setSelectedDifficulty(diff);
             }}
             onStartQuiz={() => handleStartQuiz()}
-            onPlayPenalty={() => {
-              sounds.playClick();
-              setActiveView('penalty');
-            }}
+            onOpenCoinShop={() => setIsCoinShopOpen(true)}
           />
         )}
       </main>
@@ -454,6 +425,15 @@ export default function App() {
           onResetAccount={handleResetAccount}
         />
       )}
+
+      {/* Coin Shop Modal */}
+      <CoinShopModal
+        isOpen={isCoinShopOpen}
+        onClose={() => setIsCoinShopOpen(false)}
+        language={settings.language}
+        currentCoins={user.coins}
+        onPurchaseCoins={handlePurchaseCoins}
+      />
     </div>
   );
 }

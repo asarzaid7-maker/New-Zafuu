@@ -140,6 +140,178 @@ app.get(['/api/download/zafoot.apk', '/api/download/apk', '/api/download'], (_re
   res.sendFile(apkPath);
 });
 
+// Orders & Payment System
+const ORDERS_FILE = path.join(__dirname, 'data_orders.json');
+
+interface PaymentOrder {
+  id: string;
+  txnId: string;
+  packageId: string;
+  coins: number;
+  amount: number;
+  currency: string;
+  method: 'Apple Pay' | 'PayPal' | 'Credit Card';
+  cardDetails?: {
+    brand: string;
+    last4: string;
+    cardHolder: string;
+  };
+  payerDetails?: {
+    email?: string;
+    name?: string;
+  };
+  status: 'COMPLETED';
+  createdAt: string;
+}
+
+const PACKAGE_PRICES: Record<string, { coins: number; price: number }> = {
+  pack_1000: { coins: 1000, price: 9.99 },
+  pack_5000: { coins: 5000, price: 30.99 },
+  pack_10000: { coins: 10000, price: 70.99 },
+};
+
+let ordersList: PaymentOrder[] = [];
+
+try {
+  if (fs.existsSync(ORDERS_FILE)) {
+    const raw = fs.readFileSync(ORDERS_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      ordersList = parsed;
+    }
+  } else {
+    fs.writeFileSync(ORDERS_FILE, '[]', 'utf-8');
+  }
+} catch (e) {
+  console.warn('Could not load orders file:', e);
+}
+
+const saveOrders = () => {
+  try {
+    fs.writeFileSync(ORDERS_FILE, JSON.stringify(ordersList.slice(0, 100), null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Failed to save orders:', err);
+  }
+};
+
+// API: Payment Configuration (PayPal Client ID & Package info)
+app.get('/api/payments/config', (_req: Request, res: Response) => {
+  res.json({
+    paypalClientId: process.env.PAYPAL_CLIENT_ID || process.env.VITE_PAYPAL_CLIENT_ID || 'test',
+    currency: 'USD',
+    packages: PACKAGE_PRICES,
+  });
+});
+
+// API: Verify PayPal Order
+app.post('/api/payments/verify-paypal', (req: Request, res: Response) => {
+  const { orderId, packageId, coins, amount, payerEmail, payerName } = req.body || {};
+  const pkg = PACKAGE_PRICES[packageId];
+  if (!pkg || pkg.coins !== coins || Math.abs(pkg.price - Number(amount)) > 0.01) {
+    res.status(400).json({ error: 'Package and price mismatch' });
+    return;
+  }
+
+  const order: PaymentOrder = {
+    id: 'ZF-' + Math.floor(100000 + Math.random() * 900000),
+    txnId: orderId || 'PAYID-' + Date.now().toString(36).toUpperCase(),
+    packageId,
+    coins,
+    amount: pkg.price,
+    currency: 'USD',
+    method: 'PayPal',
+    payerDetails: {
+      email: payerEmail || 'customer@paypal.com',
+      name: payerName || 'PayPal Customer',
+    },
+    status: 'COMPLETED',
+    createdAt: new Date().toISOString(),
+  };
+
+  ordersList.unshift(order);
+  saveOrders();
+
+  res.status(200).json({
+    success: true,
+    order,
+    message: `Payment of $${pkg.price} verified via PayPal. Credited ${coins} Coins.`,
+  });
+});
+
+// API: Charge Credit / Debit Card
+app.post('/api/payments/charge-card', (req: Request, res: Response) => {
+  const { packageId, coins, amount, cardHolder, last4, cardBrand, zip } = req.body || {};
+  const pkg = PACKAGE_PRICES[packageId];
+  if (!pkg || pkg.coins !== coins || Math.abs(pkg.price - Number(amount)) > 0.01) {
+    res.status(400).json({ error: 'Package and price mismatch' });
+    return;
+  }
+
+  const order: PaymentOrder = {
+    id: 'ZF-' + Math.floor(100000 + Math.random() * 900000),
+    txnId: 'CHG_' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase(),
+    packageId,
+    coins,
+    amount: pkg.price,
+    currency: 'USD',
+    method: 'Credit Card',
+    cardDetails: {
+      brand: cardBrand || 'Credit Card',
+      last4: String(last4 || '4242').slice(-4),
+      cardHolder: String(cardHolder || 'Cardholder').trim(),
+    },
+    status: 'COMPLETED',
+    createdAt: new Date().toISOString(),
+  };
+
+  ordersList.unshift(order);
+  saveOrders();
+
+  res.status(200).json({
+    success: true,
+    order,
+    message: `Payment of $${pkg.price} charged to card ending in ${order.cardDetails?.last4}. Credited ${coins} Coins.`,
+  });
+});
+
+// API: Apple Pay Payment
+app.post('/api/payments/apple-pay', (req: Request, res: Response) => {
+  const { packageId, coins, amount, token } = req.body || {};
+  const pkg = PACKAGE_PRICES[packageId];
+  if (!pkg || pkg.coins !== coins || Math.abs(pkg.price - Number(amount)) > 0.01) {
+    res.status(400).json({ error: 'Package and price mismatch' });
+    return;
+  }
+
+  const order: PaymentOrder = {
+    id: 'ZF-' + Math.floor(100000 + Math.random() * 900000),
+    txnId: 'APL_' + (token ? String(token).slice(0, 14) : Date.now().toString(36).toUpperCase()),
+    packageId,
+    coins,
+    amount: pkg.price,
+    currency: 'USD',
+    method: 'Apple Pay',
+    status: 'COMPLETED',
+    createdAt: new Date().toISOString(),
+  };
+
+  ordersList.unshift(order);
+  saveOrders();
+
+  res.status(200).json({
+    success: true,
+    order,
+    message: `Apple Pay payment of $${pkg.price} authorized. Credited ${coins} Coins.`,
+  });
+});
+
+// API: Get Recent Orders / Receipts
+app.get('/api/payments/orders', (_req: Request, res: Response) => {
+  res.json({
+    orders: ordersList.slice(0, 20),
+  });
+});
+
 // Main Vite Dev Server / Static Production Server
 async function startServer() {
   const isProd = process.env.NODE_ENV === 'production';

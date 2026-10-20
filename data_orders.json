@@ -1,0 +1,44 @@
+[
+  {
+    "id": "ZF-474317",
+    "txnId": "APL_APL_991823",
+    "packageId": "pack_10000",
+    "coins": 10000,
+    "amount": 70.99,
+    "currency": "USD",
+    "method": "Apple Pay",
+    "status": "COMPLETED",
+    "createdAt": "2026-10-20T16:58:08.541Z"
+  },
+  {
+    "id": "ZF-266389",
+    "txnId": "PAYID-TEST-12345",
+    "packageId": "pack_5000",
+    "coins": 5000,
+    "amount": 30.99,
+    "currency": "USD",
+    "method": "PayPal",
+    "payerDetails": {
+      "email": "user@paypal.com",
+      "name": "Zaid"
+    },
+    "status": "COMPLETED",
+    "createdAt": "2026-10-20T16:58:04.783Z"
+  },
+  {
+    "id": "ZF-845802",
+    "txnId": "CHG_MVGXFM820HB6",
+    "packageId": "pack_1000",
+    "coins": 1000,
+    "amount": 9.99,
+    "currency": "USD",
+    "method": "Credit Card",
+    "cardDetails": {
+      "brand": "Visa",
+      "last4": "4242",
+      "cardHolder": "Test Buyer"
+    },
+    "status": "COMPLETED",
+    "createdAt": "2026-10-20T16:57:57.315Z"
+  }
+]
