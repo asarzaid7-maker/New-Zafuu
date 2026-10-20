@@ -1,8 +1,9 @@
-import React from 'react';
-import { Trophy, Settings, User, Coins, Target, Gift } from 'lucide-react';
+import React, { useState } from 'react';
+import { Trophy, Settings, User, Coins, Target, Gift, Download } from 'lucide-react';
 import { Language, UserProfile } from '../types/quiz';
 import { getTranslation } from '../data/translations';
 import { AVATAR_OPTIONS } from '../data/avatars';
+import { DownloadApkModal } from './DownloadApkModal';
 
 interface NavbarProps {
   language: Language;
@@ -28,6 +29,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   canClaimBonus,
 }) => {
   const t = getTranslation(language);
+  const [showApkModal, setShowApkModal] = useState(false);
   const currentAvatar = AVATAR_OPTIONS.find((a) => a.id === user.avatar) || AVATAR_OPTIONS[0];
 
   return (
@@ -137,6 +139,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             </span>
           </button>
 
+          {/* Download APK Button */}
+          <button
+            onClick={() => setShowApkModal(true)}
+            className="hidden sm:flex items-center gap-1.5 p-2 text-slate-300 hover:text-emerald-400 bg-slate-800/60 hover:bg-slate-800 rounded-lg border border-slate-700/80 transition-colors text-xs font-semibold"
+            title={t.downloadApk}
+            aria-label={t.downloadApk}
+          >
+            <Download className="w-4 h-4 text-emerald-400" />
+            <span className="hidden lg:inline">{t.downloadApk}</span>
+          </button>
+
           {/* Settings Button */}
           <button
             onClick={onOpenSettings}
@@ -175,7 +188,21 @@ export const Navbar: React.FC<NavbarProps> = ({
         >
           <Trophy className="w-3.5 h-3.5 text-amber-400" /> {t.leaderboard}
         </button>
+        <button
+          onClick={() => setShowApkModal(true)}
+          className="flex items-center gap-1 font-semibold text-emerald-400"
+          title={t.downloadApk}
+        >
+          <Download className="w-3.5 h-3.5" /> APK
+        </button>
       </div>
+
+      {showApkModal && (
+        <DownloadApkModal
+          language={language}
+          onClose={() => setShowApkModal(false)}
+        />
+      )}
     </header>
   );
 };
