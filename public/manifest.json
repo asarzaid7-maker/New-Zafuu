@@ -1,0 +1,24 @@
+{
+  "name": "ZaFoot - Football Quiz Arena",
+  "short_name": "ZaFoot",
+  "description": "Football quiz game testing knowledge across Champions League, La Liga, Premier League, Serie A, Ligue 1, Career Path Challenge, and World Cup.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#050b14",
+  "theme_color": "#070d14",
+  "icons": [
+    {
+      "src": "/assets/aistudio/360_F_332687153_gmsohq86koOEWFYlYSI3N6xzb1zIcG88_cb9e53eb.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/aistudio/360_F_332687153_gmsohq86koOEWFYlYSI3N6xzb1zIcG88_cb9e53eb.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}

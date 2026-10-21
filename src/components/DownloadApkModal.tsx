@@ -45,7 +45,7 @@ export const DownloadApkModal: React.FC<DownloadApkModalProps> = ({ language, on
           </div>
           <div>
             <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 text-[10px] font-black uppercase tracking-wider mb-1">
-              <span>Android APK v1.0.0</span>
+              <span>Android APK v1.1.0 (Signed Release)</span>
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-white">
               {t.downloadApkFullTitle}
@@ -59,9 +59,13 @@ export const DownloadApkModal: React.FC<DownloadApkModalProps> = ({ language, on
 
         {/* Download Trigger Action */}
         <div className="bg-[#080e16] border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
-          <div className="flex items-center justify-between text-xs text-slate-400">
-            <span>Package: <strong className="text-white">com.zafoot.app</strong></span>
-            <span>Size: <strong className="text-emerald-400">~13 KB</strong></span>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] text-slate-400 pb-1 border-b border-slate-800/80">
+            <div>Package: <strong className="text-white block font-mono">com.zafoot.app</strong></div>
+            <div>Version: <strong className="text-white block">1.1.0 (Build 2)</strong></div>
+            <div>File Size: <strong className="text-emerald-400 block tabular-nums">125 KB</strong></div>
+            <div>Compatibility: <strong className="text-slate-300 block">Android 5.0 – 15+</strong></div>
+            <div>Security: <strong className="text-emerald-400 block">Signed (v1, v2, v3)</strong></div>
+            <div>Architecture: <strong className="text-slate-300 block">Universal</strong></div>
           </div>
 
           <button
