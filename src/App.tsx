@@ -18,7 +18,7 @@ import { ProfileModal } from './components/ProfileModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SignInModal } from './components/SignInModal';
 import { TrophiesView } from './components/TrophiesView';
-import { HairGame } from './components/HairGame';
+import { CareerChallenge } from './components/CareerChallenge';
 import { sounds } from './utils/audio';
 
 const STORAGE_KEY_USER = 'zafoot_user_profile_v1';
@@ -65,7 +65,7 @@ export default function App() {
   });
 
   // Navigation & Game State
-  const [activeView, setActiveView] = useState<'lobby' | 'quiz' | 'trophies' | 'hairGame'>('lobby');
+  const [activeView, setActiveView] = useState<'lobby' | 'quiz' | 'trophies' | 'careerChallenge'>('lobby');
   const [selectedCategory, setSelectedCategory] = useState<CategoryId>('champions_league');
   const [selectedDifficulty, setSelectedDifficulty] = useState<DifficultyLevel>('easy');
   const [quizQuestions, setQuizQuestions] = useState<Question[]>([]);
@@ -348,9 +348,9 @@ export default function App() {
           </>
         )}
 
-        {/* Guess Player by Their Hair View */}
-        {activeView === 'hairGame' && (
-          <HairGame
+        {/* Career Path Challenge View */}
+        {activeView === 'careerChallenge' && (
+          <CareerChallenge
             language={settings.language}
             user={user}
             onUpdateCoins={(newCoins) => {
@@ -394,9 +394,9 @@ export default function App() {
             }}
             onStartQuiz={() => handleStartQuiz()}
             onOpenCoinShop={() => setIsCoinShopOpen(true)}
-            onPlayHairGame={() => {
+            onPlayCareerChallenge={() => {
               sounds.playClick();
-              setActiveView('hairGame');
+              setActiveView('careerChallenge');
             }}
           />
         )}

@@ -1,4 +1,15 @@
 {
   "test_broke_player": 100,
-  "test_rich_player": 1500
+  "test_rich_player": 1500,
+  "test_insufficient": 100,
+  "tester_full_game": 300,
+  "auto_test_player": 800,
+  "auto_test_player_full": 800,
+  "winner_player": 300,
+  "expert_winner": 700,
+  "med_player": 600,
+  "hard_player": 400,
+  "career_test_user": 100,
+  "career_fresh_tester": 350,
+  "career_champion_user": 1150
 }

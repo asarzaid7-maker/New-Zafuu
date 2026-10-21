@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Trophy, Settings, Coins, Gift, Download, Scissors } from 'lucide-react';
+import { Trophy, Settings, Coins, Gift, Download, GitCommit } from 'lucide-react';
 import { Language, UserProfile } from '../types/quiz';
 import { getTranslation } from '../data/translations';
 import { AVATAR_OPTIONS } from '../data/avatars';
@@ -9,8 +9,8 @@ interface NavbarProps {
   language: Language;
   onLanguageChange: (lang: Language) => void;
   user: UserProfile;
-  activeView: 'lobby' | 'trophies' | 'hairGame';
-  onNavigate: (view: 'lobby' | 'trophies' | 'hairGame') => void;
+  activeView: 'lobby' | 'trophies' | 'careerChallenge';
+  onNavigate: (view: 'lobby' | 'trophies' | 'careerChallenge') => void;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   onClaimDailyBonus: () => void;
@@ -72,17 +72,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             {t.play}
           </button>
 
-          {/* New Guess the Player by Hair Game Link */}
+          {/* Career Path Challenge Link */}
           <button
-            onClick={() => onNavigate('hairGame')}
+            onClick={() => onNavigate('careerChallenge')}
             className={`flex items-center gap-1.5 whitespace-nowrap pb-0.5 border-b-2 transition-colors ${
-              activeView === 'hairGame'
+              activeView === 'careerChallenge'
                 ? 'border-amber-400 text-white font-semibold'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Scissors className="w-4 h-4 text-amber-400" />
-            <span>{language === 'ar' ? 'خمّن الشعر' : 'Hair Challenge'}</span>
+            <GitCommit className="w-4 h-4 text-amber-400" />
+            <span>{language === 'ar' ? 'مسيرة اللاعبين' : 'Career Path'}</span>
             <span className="text-[10px] bg-amber-500 text-slate-950 font-black px-1.5 py-0.2 rounded-full uppercase">
               New
             </span>
@@ -195,12 +195,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           <span>⚽</span> {t.play}
         </button>
         <button
-          onClick={() => onNavigate('hairGame')}
+          onClick={() => onNavigate('careerChallenge')}
           className={`flex items-center gap-1 font-semibold ${
-            activeView === 'hairGame' ? 'text-amber-400' : 'text-slate-400'
+            activeView === 'careerChallenge' ? 'text-amber-400' : 'text-slate-400'
           }`}
         >
-          <Scissors className="w-3.5 h-3.5 text-amber-400" /> {language === 'ar' ? 'الشعر' : 'Hair'}
+          <GitCommit className="w-3.5 h-3.5 text-amber-400" /> {language === 'ar' ? 'المسيرة' : 'Careers'}
         </button>
         <button
           onClick={onOpenCoinShop}

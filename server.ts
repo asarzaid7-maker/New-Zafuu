@@ -333,38 +333,73 @@ app.get('/api/payments/orders', (_req: Request, res: Response) => {
 });
 
 // ==========================================
-// Guess the Player by Hair Game Backend
+// Career Path Challenge Game Backend
 // ==========================================
-interface HairPlayer {
+interface ClubHistory {
+  club: string;
+  club_ar: string;
+  years: string;
+  country: string;
+  loan?: boolean;
+}
+
+interface CareerPlayer {
   id: string;
   name: string;
   name_ar: string;
-  league: string;
-  league_ar: string;
-  club: string;
-  club_ar: string;
-  hair_style: string;
-  hair_style_ar: string;
-  photo_full: string;
-  photo_hair: string;
+  nationality: string;
+  nationality_ar: string;
+  flag: string;
+  photo: string;
+  position: string;
+  position_ar: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  career: ClubHistory[];
+  distractors: string[];
 }
 
-interface ActiveHairChallenge {
-  challengeId: string;
+interface CareerMatchQuestion {
+  questionIndex: number;
+  targetPlayerId: string;
+  careerTimeline: ClubHistory[];
+  options: {
+    id: string;
+    name: string;
+    name_ar: string;
+    nationality: string;
+    nationality_ar: string;
+    flag: string;
+    photo: string;
+    position: string;
+    position_ar: string;
+  }[];
+}
+
+interface ActiveCareerMatch {
+  matchId: string;
   userId: string;
-  correctPlayerId: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  fee: number;
+  reward: number;
+  winThreshold: number;
+  totalQuestions: number;
+  questions: CareerMatchQuestion[];
+  answers: Record<number, { selectedPlayerId: string; isCorrect: boolean }>;
+  correctCount: number;
+  wrongCount: number;
+  completed: boolean;
+  rewardClaimed: boolean;
   createdAt: number;
-  resolved: boolean;
 }
 
-const HAIR_PLAYERS_FILE = path.join(__dirname, 'src', 'data', 'hairPlayers.json');
-let hairPlayers: HairPlayer[] = [];
+const CAREER_PLAYERS_FILE = path.join(__dirname, 'src', 'data', 'careerPlayers.json');
+let careerPlayers: CareerPlayer[] = [];
 try {
-  if (fs.existsSync(HAIR_PLAYERS_FILE)) {
-    hairPlayers = JSON.parse(fs.readFileSync(HAIR_PLAYERS_FILE, 'utf-8'));
+  if (fs.existsSync(CAREER_PLAYERS_FILE)) {
+    careerPlayers = JSON.parse(fs.readFileSync(CAREER_PLAYERS_FILE, 'utf-8'));
   }
 } catch (e) {
-  console.warn('Could not load hairPlayers.json:', e);
+  console.warn('Could not load careerPlayers.json:', e);
 }
 
 const BALANCES_FILE = path.join(__dirname, 'data_user_balances.json');
@@ -387,7 +422,44 @@ const saveBalances = () => {
   }
 };
 
-const activeHairChallenges: Map<string, ActiveHairChallenge> = new Map();
+const activeCareerMatches: Map<string, ActiveCareerMatch> = new Map();
+
+type CareerDiff = 'easy' | 'medium' | 'hard';
+
+// Difficulty configurations for Career Path Challenge
+const CAREER_CONFIG: Record<CareerDiff, {
+  fee: number;
+  reward: number;
+  questionsCount: number;
+  winThreshold: number;
+  name: string;
+  name_ar: string;
+}> = {
+  easy: {
+    fee: 150,
+    reward: 300,
+    questionsCount: 15,
+    winThreshold: 10, // 10/15 (~67%)
+    name: 'Easy',
+    name_ar: 'السهل',
+  },
+  medium: {
+    fee: 300,
+    reward: 600,
+    questionsCount: 20,
+    winThreshold: 14, // 14/20 (70%)
+    name: 'Medium',
+    name_ar: 'المتوسط',
+  },
+  hard: {
+    fee: 500,
+    reward: 1000,
+    questionsCount: 25,
+    winThreshold: 18, // 18/25 (72%)
+    name: 'Hard',
+    name_ar: 'الصعب',
+  },
+};
 
 // API: Sync balance
 app.post('/api/user/sync-balance', (req: Request, res: Response) => {
@@ -403,134 +475,251 @@ app.post('/api/user/sync-balance', (req: Request, res: Response) => {
   res.json({ userId, coins: userBalances[userId] });
 });
 
-// API: Start Hair Game Challenge (Cost: 500 Coins)
-app.post('/api/hair-game/start', (req: Request, res: Response) => {
-  const { userId, clientCoins } = req.body || {};
+// Helper: Shuffle array
+function shuffleArray<T>(arr: T[]): T[] {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+// API: Start Career Path Challenge Game
+app.post('/api/career-challenge/start', (req: Request, res: Response) => {
+  const { userId, difficulty = 'easy', clientCoins } = req.body || {};
   if (!userId) {
     res.status(400).json({ error: 'Missing userId' });
     return;
   }
 
+  const diffKey: CareerDiff = (difficulty === 'medium' || difficulty === 'hard') ? difficulty : 'easy';
+  const cfg = CAREER_CONFIG[diffKey];
+
   if (typeof userBalances[userId] !== 'number') {
     userBalances[userId] = typeof clientCoins === 'number' ? clientCoins : 50;
   }
 
-  const COST = 500;
-  const REWARD = 1000;
   const currentBal = userBalances[userId];
 
-  if (currentBal < COST) {
+  // Prevent users from starting if they don't have enough coins
+  if (currentBal < cfg.fee) {
     res.status(403).json({
       error: 'Insufficient coins',
-      message: 'You need at least 500 Coins to play Guess the Player by Their Hair.',
-      message_ar: 'تحتاج إلى 500 عملة على الأقل للعب تحدي تخمين اللاعب من شعره.',
-      required: COST,
+      message: `You need at least ${cfg.fee} Coins to enter the ${cfg.name} Career Challenge.`,
+      message_ar: `تحتاج إلى ${cfg.fee} عملة على الأقل لدخول تحدي مسيرة اللاعب بمستوى ${cfg.name_ar}.`,
+      required: cfg.fee,
       currentBalance: currentBal,
     });
     return;
   }
 
-  // Deduct 500 Coins on server
-  userBalances[userId] -= COST;
+  // Deduct entry fee once per game on start
+  userBalances[userId] = currentBal - cfg.fee;
   saveBalances();
 
-  if (hairPlayers.length === 0) {
-    res.status(500).json({ error: 'Player database unavailable' });
-    return;
+  // Separate pools by difficulty
+  const easyPool = careerPlayers.filter((p) => p.difficulty === 'easy');
+  const mediumPool = careerPlayers.filter((p) => p.difficulty === 'medium');
+  const hardPool = careerPlayers.filter((p) => p.difficulty === 'hard');
+
+  let selectedTargets: CareerPlayer[] = [];
+  const targetCount = cfg.questionsCount;
+
+  if (diffKey === 'easy') {
+    selectedTargets = [...shuffleArray(easyPool), ...shuffleArray(mediumPool)].slice(0, targetCount);
+  } else if (diffKey === 'medium') {
+    selectedTargets = [...shuffleArray(mediumPool), ...shuffleArray(easyPool), ...shuffleArray(hardPool)].slice(0, targetCount);
+  } else {
+    selectedTargets = [...shuffleArray(hardPool), ...shuffleArray(mediumPool), ...shuffleArray(easyPool)].slice(0, targetCount);
   }
 
-  // Random secret target
-  const targetIndex = Math.floor(Math.random() * hairPlayers.length);
-  const target = hairPlayers[targetIndex];
+  // Ensure unique targets
+  selectedTargets = shuffleArray(selectedTargets).slice(0, targetCount);
 
-  // Pick 3 random distractors
-  const remaining = hairPlayers.filter((p) => p.id !== target.id);
-  const shuffledRemaining = [...remaining].sort(() => 0.5 - Math.random());
-  const distractors = shuffledRemaining.slice(0, 3);
+  // Build questions with 4 answer options each (1 correct + 3 smart distractors)
+  const questions: CareerMatchQuestion[] = selectedTargets.map((target, idx) => {
+    // Pick distractors: prefer named distractors, fall back to players from same tier/pool
+    const namedDistractorPlayers = (target.distractors || [])
+      .map((id) => careerPlayers.find((p) => p.id === id))
+      .filter((p): p is CareerPlayer => p !== undefined && p.id !== target.id);
 
-  // Four shuffled options without answer key
-  const options = [target, ...distractors]
-    .map((p) => ({
+    const otherPlayers = careerPlayers.filter(
+      (p) => p.id !== target.id && !namedDistractorPlayers.some((d) => d.id === p.id)
+    );
+
+    const neededDistractors = 3;
+    const chosenDistractors: CareerPlayer[] = [
+      ...shuffleArray(namedDistractorPlayers).slice(0, 2),
+      ...shuffleArray(otherPlayers),
+    ].slice(0, neededDistractors);
+
+    const candidateOptions = shuffleArray([target, ...chosenDistractors]).map((p) => ({
       id: p.id,
       name: p.name,
       name_ar: p.name_ar,
-      club: p.club,
-      club_ar: p.club_ar,
-      league: p.league,
-      league_ar: p.league_ar,
-      photo: p.photo_full,
-    }))
-    .sort(() => 0.5 - Math.random());
+      nationality: p.nationality,
+      nationality_ar: p.nationality_ar,
+      flag: p.flag,
+      photo: p.photo,
+      position: p.position,
+      position_ar: p.position_ar,
+    }));
 
-  const challengeId = 'hg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-  activeHairChallenges.set(challengeId, {
-    challengeId,
-    userId,
-    correctPlayerId: target.id,
-    createdAt: Date.now(),
-    resolved: false,
+    return {
+      questionIndex: idx,
+      targetPlayerId: target.id,
+      careerTimeline: target.career,
+      options: candidateOptions,
+    };
   });
 
-  // Housekeeping
+  const matchId = 'ccm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  const newMatch: ActiveCareerMatch = {
+    matchId,
+    userId,
+    difficulty: diffKey,
+    fee: cfg.fee,
+    reward: cfg.reward,
+    winThreshold: cfg.winThreshold,
+    totalQuestions: targetCount,
+    questions,
+    answers: {},
+    correctCount: 0,
+    wrongCount: 0,
+    completed: false,
+    rewardClaimed: false,
+    createdAt: Date.now(),
+  };
+
+  activeCareerMatches.set(matchId, newMatch);
+
+  // Housekeeping: remove old matches (> 2 hours)
   const now = Date.now();
-  for (const [id, c] of activeHairChallenges.entries()) {
-    if (now - c.createdAt > 30 * 60 * 1000) {
-      activeHairChallenges.delete(id);
+  for (const [id, m] of activeCareerMatches.entries()) {
+    if (now - m.createdAt > 2 * 60 * 60 * 1000) {
+      activeCareerMatches.delete(id);
     }
   }
 
+  // Return client payload WITHOUT targetPlayerId (prevents inspecting answer)
+  const clientQuestions = questions.map((q) => ({
+    questionIndex: q.questionIndex,
+    careerTimeline: q.careerTimeline,
+    options: q.options,
+  }));
+
   res.json({
-    challengeId,
-    hairPhoto: target.photo_hair,
-    options,
-    cost: COST,
-    reward: REWARD,
+    matchId,
+    difficulty: diffKey,
+    totalQuestions: targetCount,
+    fee: cfg.fee,
+    reward: cfg.reward,
+    winThreshold: cfg.winThreshold,
     updatedBalance: userBalances[userId],
+    questions: clientQuestions,
   });
 });
 
-// API: Submit Hair Game Guess
-app.post('/api/hair-game/submit', (req: Request, res: Response) => {
-  const { challengeId, selectedPlayerId, userId } = req.body || {};
-  if (!challengeId || !selectedPlayerId || !userId) {
+// API: Submit Answer for a single question in Career Path Challenge
+app.post('/api/career-challenge/answer', (req: Request, res: Response) => {
+  const { matchId, questionIndex, selectedPlayerId, userId } = req.body || {};
+  if (!matchId || typeof questionIndex !== 'number' || !selectedPlayerId || !userId) {
     res.status(400).json({ error: 'Missing parameters' });
     return;
   }
 
-  const challenge = activeHairChallenges.get(challengeId);
-  if (!challenge) {
-    res.status(404).json({ error: 'Challenge expired or not found. Please start a new round.' });
+  const match = activeCareerMatches.get(matchId);
+  if (!match) {
+    res.status(404).json({ error: 'Match session expired or not found.' });
     return;
   }
 
-  if (challenge.userId !== userId) {
-    res.status(403).json({ error: 'Unauthorized challenge' });
+  if (match.userId !== userId) {
+    res.status(403).json({ error: 'Unauthorized match' });
     return;
   }
 
-  if (challenge.resolved) {
-    res.status(400).json({ error: 'Challenge already answered' });
+  if (match.answers[questionIndex]) {
+    res.status(400).json({ error: 'Question already answered' });
     return;
   }
 
-  challenge.resolved = true;
-  activeHairChallenges.delete(challengeId);
+  const question = match.questions[questionIndex];
+  if (!question) {
+    res.status(404).json({ error: 'Question index invalid' });
+    return;
+  }
 
-  const isCorrect = selectedPlayerId === challenge.correctPlayerId;
-  const correctPlayer = hairPlayers.find((p) => p.id === challenge.correctPlayerId);
+  const isCorrect = selectedPlayerId === question.targetPlayerId;
+  match.answers[questionIndex] = { selectedPlayerId, isCorrect };
 
-  const REWARD = 1000;
   if (isCorrect) {
-    userBalances[userId] = (userBalances[userId] || 0) + REWARD;
+    match.correctCount++;
+  } else {
+    match.wrongCount++;
+  }
+
+  const correctPlayer = careerPlayers.find((p) => p.id === question.targetPlayerId);
+
+  res.json({
+    isCorrect,
+    questionIndex,
+    selectedPlayerId,
+    correctPlayer,
+    correctCount: match.correctCount,
+    wrongCount: match.wrongCount,
+  });
+});
+
+// API: Finish Career Path Challenge Game & Validate Win Reward
+app.post('/api/career-challenge/finish', (req: Request, res: Response) => {
+  const { matchId, userId } = req.body || {};
+  if (!matchId || !userId) {
+    res.status(400).json({ error: 'Missing parameters' });
+    return;
+  }
+
+  const match = activeCareerMatches.get(matchId);
+  if (!match) {
+    res.status(404).json({ error: 'Match session not found' });
+    return;
+  }
+
+  if (match.userId !== userId) {
+    res.status(403).json({ error: 'Unauthorized match' });
+    return;
+  }
+
+  // Prevent duplicate reward claims
+  if (match.rewardClaimed) {
+    res.status(400).json({ error: 'Reward already claimed for this game' });
+    return;
+  }
+
+  match.completed = true;
+  match.rewardClaimed = true;
+
+  const isWin = match.correctCount >= match.winThreshold;
+  let coinsAwarded = 0;
+
+  if (isWin) {
+    coinsAwarded = match.reward;
+    userBalances[userId] = (userBalances[userId] || 0) + coinsAwarded;
     saveBalances();
   }
 
   res.json({
-    isCorrect,
-    selectedPlayerId,
-    correctPlayer,
-    coinsAwarded: isCorrect ? REWARD : 0,
-    netCoinsChange: isCorrect ? 500 : -500,
+    isWin,
+    score: match.correctCount,
+    totalQuestions: match.totalQuestions,
+    correctCount: match.correctCount,
+    wrongCount: match.wrongCount,
+    winThreshold: match.winThreshold,
+    difficulty: match.difficulty,
+    feeDeducted: match.fee,
+    coinsAwarded,
+    netCoinsChange: isWin ? (coinsAwarded - match.fee) : -match.fee,
     updatedBalance: userBalances[userId],
   });
 });
