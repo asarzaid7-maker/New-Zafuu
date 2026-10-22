@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Sparkles, Coins, Trophy, Flame, AlertCircle } from 'lucide-react';
+import { Play, Sparkles, Coins, Trophy, Flame, AlertCircle, Bot } from 'lucide-react';
 import { CategoryId, DifficultyLevel, Language, UserProfile } from '../types/quiz';
 import { CATEGORIES_META, DIFFICULTY_CONFIG } from '../data/questions';
 import { getTranslation } from '../data/translations';
@@ -14,6 +14,7 @@ interface LobbyProps {
   onStartQuiz: () => void;
   onOpenCoinShop: () => void;
   onPlayCareerChallenge: () => void;
+  onOpenAiChat: () => void;
 }
 
 export const Lobby: React.FC<LobbyProps> = ({
@@ -26,6 +27,7 @@ export const Lobby: React.FC<LobbyProps> = ({
   onStartQuiz,
   onOpenCoinShop,
   onPlayCareerChallenge,
+  onOpenAiChat,
 }) => {
   const t = getTranslation(language);
   const diffConfig = DIFFICULTY_CONFIG[selectedDifficulty] || DIFFICULTY_CONFIG.easy;
@@ -79,13 +81,23 @@ export const Lobby: React.FC<LobbyProps> = ({
               <span className="text-white font-bold tabular-nums">30 🪙 ➔ +60 🪙</span>
             </div>
 
-            <button
-              onClick={onPlayCareerChallenge}
-              className="flex items-center gap-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 px-3.5 py-1.5 rounded-lg text-xs font-black shadow-md shadow-amber-500/20 active:scale-95 transition-all cursor-pointer ml-auto"
-            >
-              <span>🧭</span>
-              <span>{language === 'ar' ? 'تحدي مسيرة اللاعبين ➔' : 'Career Challenge ➔'}</span>
-            </button>
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                onClick={onOpenAiChat}
+                className="flex items-center gap-1.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 px-3.5 py-1.5 rounded-lg text-xs font-black shadow-md shadow-emerald-500/20 active:scale-95 transition-all cursor-pointer"
+              >
+                <Bot className="w-3.5 h-3.5" />
+                <span>{language === 'ar' ? 'زافوت AI 🤖' : 'ZaFoot AI 🤖'}</span>
+              </button>
+
+              <button
+                onClick={onPlayCareerChallenge}
+                className="flex items-center gap-1.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 px-3.5 py-1.5 rounded-lg text-xs font-black shadow-md shadow-amber-500/20 active:scale-95 transition-all cursor-pointer"
+              >
+                <span>🧭</span>
+                <span>{language === 'ar' ? 'تحدي المسيرة ➔' : 'Career Challenge ➔'}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -128,6 +140,48 @@ export const Lobby: React.FC<LobbyProps> = ({
             >
               <span>🧭</span>
               <span>{language === 'ar' ? 'العب تحدي المسيرة الآن ➔' : 'Play Career Challenge ➔'}</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Featured AI Intelligence: ZaFoot AI Football Assistant */}
+      <section className="relative rounded-2xl overflow-hidden border border-emerald-500/30 bg-gradient-to-r from-[#071926] via-[#091522] to-[#0d1624] p-5 sm:p-7 shadow-xl">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+          <div className="flex items-start gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-400 via-teal-500 to-emerald-600 flex items-center justify-center text-slate-950 font-black text-2xl shadow-lg shadow-emerald-500/25 shrink-0">
+              <Bot className="w-8 h-8 text-slate-950" />
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-black uppercase tracking-wider">
+                  Official Google Gemini AI
+                </span>
+                <span className="text-xs text-slate-400 font-semibold">
+                  ⚽ {language === 'ar' ? 'مساعد كروي متخصص حصرياً' : 'Football-Only AI Specialist'}
+                </span>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
+                <span>ZaFoot AI</span>
+                <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                  Online
+                </span>
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-300 max-w-xl leading-relaxed">
+                {language === 'ar'
+                  ? 'مساعدك الكروي فائق السرعة: اسأل بالدارجة المغربية (العربية أو اللاتينية 7, 3, 9)، الفصحى، الفرنسية أو الإنجليزية عن تاريخ الأندية، أرقام النجوم، التكتيكات، وكواليس الميركاتو.'
+                  : 'Your ultra-fast football assistant: ask in Moroccan Darija (Latin Arabizi & Arabic), English, French, or Arabic about club histories, tactics, records, and transfers.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto shrink-0">
+            <button
+              onClick={onOpenAiChat}
+              className="w-full sm:w-auto px-6 py-3.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black rounded-xl text-sm shadow-lg shadow-emerald-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+            >
+              <Bot className="w-4 h-4" />
+              <span>{language === 'ar' ? 'تحدث مع زافوت AI ➔' : 'Chat with ZaFoot AI ➔'}</span>
             </button>
           </div>
         </div>

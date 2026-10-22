@@ -155,17 +155,20 @@ export const translations = {
     rulesTitle: 'Official Competition Rules',
     username: 'Manager Name',
     selectAvatar: 'Choose Manager Avatar',
-    // Live User Counter & APK Download
+    // Live User Counter
     liveCounterTitle: 'Registered Managers',
     liveBadge: 'LIVE DB',
     liveSubtitle: 'Real-time registered users database',
     latestJoined: 'Just joined',
-    downloadApk: 'Download APK',
-    downloadApkSub: 'Official Android App (.apk)',
-    downloadApkFullTitle: 'Download ZaFoot Android APK',
-    downloadApkBannerDesc: 'Play ZaFoot natively on Android devices with fast, full-screen football quiz experience.',
-    downloadStarted: 'Downloading ZaFoot.apk...',
-    apkDownloadInstructions: 'After downloading, tap ZaFoot.apk in your notification bar or Downloads folder to install.',
+    // ZaFoot AI
+    zafootAi: 'ZaFoot AI',
+    zafootAiSubtitle: 'Intelligent Football Assistant powered by Google Gemini',
+    zafootAiDesc: 'Ask about players, tactics, historical records, trophies, transfers, rules, and world football.',
+    askZaFootAi: 'Ask ZaFoot AI',
+    aiInputPlaceholder: 'Ask anything about football (e.g. tactics, records, players, transfers)...',
+    clearChat: 'Clear Conversation',
+    footballOnlyBadge: 'Football Only',
+    poweredByGemini: 'Powered by Google Gemini',
   },
   ar: {
     appName: 'زافوت',
@@ -317,17 +320,20 @@ export const translations = {
     rulesTitle: 'قوانين المسابقة الرسمية',
     username: 'اسم المدرب',
     selectAvatar: 'اختر صورة المدرب',
-    // Live User Counter & APK Download
+    // Live User Counter
     liveCounterTitle: 'المدربون المسجلون',
     liveBadge: 'مباشر من القاعدة',
     liveSubtitle: 'قاعدة بيانات المستخدمين المسجلين في الوقت الفعلي',
     latestJoined: 'انضم للتو',
-    downloadApk: 'تحميل APK للأندرويد',
-    downloadApkSub: 'تطبيق أندرويد الأصلي (.apk)',
-    downloadApkFullTitle: 'تحميل تطبيق زافوت للأندرويد (APK)',
-    downloadApkBannerDesc: 'استمتع بلعبة زافوت مباشرة على هاتفك الأندرويد بشاشة كاملة وسرعة فائقة.',
-    downloadStarted: 'جاري تحميل ملف ZaFoot.apk...',
-    apkDownloadInstructions: 'بعد اكتمال التحميل، افتح ملف ZaFoot.apk من شريط الإشعارات أو مجلد التنزيلات لتثبيته.',
+    // ZaFoot AI
+    zafootAi: 'زافوت AI',
+    zafootAiSubtitle: 'المساعد الكروي الذكي المدعوم بـ Google Gemini',
+    zafootAiDesc: 'اسأل عن اللاعبين، التكتيكات، الأرقام القياسية، الكؤوس، الانتقالات، والقوانين وتاريخ كرة القدم العالمية.',
+    askZaFootAi: 'اسأل زافوت AI',
+    aiInputPlaceholder: 'اسأل أي شيء في عالم كرة القدم (مثل التكتيكات، الأرقام، مسيرة اللاعبين، الانتقالات)...',
+    clearChat: 'محادثة جديدة',
+    footballOnlyBadge: 'كرة القدم فقط',
+    poweredByGemini: 'مدعوم بـ Google Gemini',
   },
 };
 

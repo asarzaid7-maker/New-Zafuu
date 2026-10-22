@@ -34,6 +34,7 @@ export interface UserProfile {
   id: string;
   username: string;
   avatar: string;
+  customPhoto?: string; // Persistent uploaded profile picture data URL
   coins: number;
   quizzesPlayed: number;
   quizzesWon: number;

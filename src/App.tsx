@@ -19,6 +19,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { SignInModal } from './components/SignInModal';
 import { TrophiesView } from './components/TrophiesView';
 import { CareerChallenge } from './components/CareerChallenge';
+import { ZaFootAI } from './components/ZaFootAI';
 import { sounds } from './utils/audio';
 
 const STORAGE_KEY_USER = 'zafoot_user_profile_v1';
@@ -50,6 +51,7 @@ export default function App() {
         if (parsed && typeof parsed.coins === 'number') {
           return {
             ...parsed,
+            customPhoto: typeof parsed.customPhoto === 'string' ? parsed.customPhoto : undefined,
             trophies: Array.isArray(parsed.trophies) ? parsed.trophies : [],
             quizzesPlayed: typeof parsed.quizzesPlayed === 'number' ? parsed.quizzesPlayed : 0,
             quizzesWon: typeof parsed.quizzesWon === 'number' ? parsed.quizzesWon : 0,
@@ -65,7 +67,7 @@ export default function App() {
   });
 
   // Navigation & Game State
-  const [activeView, setActiveView] = useState<'lobby' | 'quiz' | 'trophies' | 'careerChallenge'>('lobby');
+  const [activeView, setActiveView] = useState<'lobby' | 'quiz' | 'trophies' | 'careerChallenge' | 'aiChat'>('lobby');
   const [selectedCategory, setSelectedCategory] = useState<CategoryId>('champions_league');
   const [selectedDifficulty, setSelectedDifficulty] = useState<DifficultyLevel>('easy');
   const [quizQuestions, setQuizQuestions] = useState<Question[]>([]);
@@ -105,11 +107,12 @@ export default function App() {
   }, [settings]);
 
   // Sign In handler (gives 50 coins)
-  const handleSignIn = (username: string, avatar: string) => {
+  const handleSignIn = (username: string, avatar: string, customPhoto?: string) => {
     const newUser: UserProfile = {
       id: 'player_' + Date.now(),
       username: username.trim() || 'Manager',
       avatar: avatar || 'striker',
+      customPhoto: customPhoto || undefined,
       coins: 50, // Initial 50 Coins granted on sign in!
       quizzesPlayed: 0,
       quizzesWon: 0,
@@ -377,6 +380,18 @@ export default function App() {
           />
         )}
 
+        {/* ZaFoot AI Football Assistant View */}
+        {activeView === 'aiChat' && (
+          <ZaFootAI
+            language={settings.language}
+            user={user}
+            onBackToLobby={() => {
+              sounds.playClick();
+              setActiveView('lobby');
+            }}
+          />
+        )}
+
         {/* Match Selection Lobby View */}
         {activeView === 'lobby' && (
           <Lobby
@@ -397,6 +412,10 @@ export default function App() {
             onPlayCareerChallenge={() => {
               sounds.playClick();
               setActiveView('careerChallenge');
+            }}
+            onOpenAiChat={() => {
+              sounds.playClick();
+              setActiveView('aiChat');
             }}
           />
         )}
