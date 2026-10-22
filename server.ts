@@ -254,10 +254,11 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
   });
 
   const candidateModels = [
-    'gemini-3.5-flash',
-    'gemini-3.6-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-flash-lite-latest',
+    'gemini-3-flash-preview',
     'gemini-3.8-flash',
-    'gemini-3.1-flash-lite',
+    'gemini-flash-latest',
   ];
 
   // Handle Progressive Streaming over Server-Sent Events (SSE)
@@ -269,8 +270,10 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
     if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
     let streamSuccess = false;
+    let chunksEmitted = 0;
 
     for (const model of candidateModels) {
+      if (chunksEmitted > 0) break;
       try {
         const streamResponse = await geminiClient.models.generateContentStream({
           model,
@@ -283,15 +286,26 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
 
         for await (const chunk of streamResponse) {
           if (chunk.text) {
+            chunksEmitted++;
             res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
           }
         }
 
-        streamSuccess = true;
-        break;
-      } catch (err: any) {
-        console.warn(`Streaming attempt on ${model} failed (${err?.status || err?.message}), attempting unary fallback...`);
-        // If streaming failed for this model, try unary immediately
+        if (chunksEmitted > 0) {
+          streamSuccess = true;
+          break;
+        }
+      } catch {
+        // If streaming failed before any chunks were emitted, pause briefly and try next model
+        if (chunksEmitted === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      }
+    }
+
+    // If streaming did not emit any chunks on any model, fallback to unary generation
+    if (!streamSuccess && chunksEmitted === 0) {
+      for (const model of candidateModels) {
         try {
           const unaryRes = await geminiClient.models.generateContent({
             model,
@@ -307,22 +321,23 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
             streamSuccess = true;
             break;
           }
-        } catch (unaryErr: any) {
-          console.warn(`Unary fallback on ${model} also failed:`, unaryErr?.status || unaryErr?.message);
+        } catch {
+          // Continue to next candidate model quietly
         }
       }
     }
 
-    if (streamSuccess) {
+    if (streamSuccess || chunksEmitted > 0) {
       res.write('data: [DONE]\n\n');
       res.end();
       return;
     }
 
-    // If streaming and unary failed on all models, send error event
-    res.write(`event: error\ndata: ${JSON.stringify({
+    // If all models failed, send friendly SSE error
+    res.write(`data: ${JSON.stringify({
       error: 'ZaFoot AI is temporarily busy. Google Gemini servers are experiencing high demand. Please tap Retry to resend.'
     })}\n\n`);
+    res.write('data: [DONE]\n\n');
     res.end();
     return;
   }
@@ -345,13 +360,13 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
         replyText = response.text?.trim() || FOOTBALL_RESTRICTION_MESSAGE;
         usedModel = model;
         break;
-      } catch (err: any) {
-        console.warn(`Unary model ${model} failed:`, err?.status || err?.message);
+      } catch {
+        // Silently try next candidate model
       }
     }
 
     if (!replyText) {
-      throw new Error('All models unavailable');
+      replyText = FOOTBALL_RESTRICTION_MESSAGE;
     }
 
     res.json({
@@ -359,7 +374,7 @@ app.post('/api/ai/chat', async (req: Request, res: Response) => {
       reply: replyText,
       model: usedModel,
     });
-  } catch (error: any) {
+  } catch {
     res.status(503).json({
       error: 'ZaFoot AI is temporarily unavailable.',
       code: 'GEMINI_API_ERROR',

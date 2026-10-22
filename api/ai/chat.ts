@@ -89,10 +89,11 @@ export default async function handler(req: any, res: any) {
     });
 
     const candidateModels = [
-      'gemini-3.5-flash',
-      'gemini-3.6-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-flash-lite-latest',
+      'gemini-3-flash-preview',
       'gemini-3.8-flash',
-      'gemini-3.1-flash-lite',
+      'gemini-flash-latest',
     ];
 
     // If streaming requested on Vercel
@@ -103,8 +104,10 @@ export default async function handler(req: any, res: any) {
       if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
       let streamSuccess = false;
+      let chunksEmitted = 0;
 
       for (const model of candidateModels) {
+        if (chunksEmitted > 0) break;
         try {
           const streamResponse = await geminiClient.models.generateContentStream({
             model,
@@ -117,14 +120,25 @@ export default async function handler(req: any, res: any) {
 
           for await (const chunk of streamResponse) {
             if (chunk.text) {
+              chunksEmitted++;
               res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
             }
           }
 
-          streamSuccess = true;
-          break;
-        } catch (err: any) {
-          console.warn(`Vercel streaming attempt on ${model} failed, attempting unary fallback...`);
+          if (chunksEmitted > 0) {
+            streamSuccess = true;
+            break;
+          }
+        } catch {
+          if (chunksEmitted === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 200));
+          }
+        }
+      }
+
+      // If streaming emitted nothing, try unary
+      if (!streamSuccess && chunksEmitted === 0) {
+        for (const model of candidateModels) {
           try {
             const unaryRes = await geminiClient.models.generateContent({
               model,
@@ -140,20 +154,21 @@ export default async function handler(req: any, res: any) {
               streamSuccess = true;
               break;
             }
-          } catch (unaryErr) {
-            console.warn(`Vercel unary fallback on ${model} also failed.`);
+          } catch {
+            // quiet fallback
           }
         }
       }
 
-      if (streamSuccess) {
+      if (streamSuccess || chunksEmitted > 0) {
         res.write('data: [DONE]\n\n');
         return res.end();
       }
 
-      res.write(`event: error\ndata: ${JSON.stringify({
+      res.write(`data: ${JSON.stringify({
         error: 'ZaFoot AI is temporarily busy. Google Gemini servers are experiencing high demand. Please tap Retry to resend.'
       })}\n\n`);
+      res.write('data: [DONE]\n\n');
       return res.end();
     }
 
@@ -175,13 +190,13 @@ export default async function handler(req: any, res: any) {
         replyText = response.text?.trim() || FOOTBALL_RESTRICTION_MESSAGE;
         usedModel = model;
         break;
-      } catch (err: any) {
-        console.warn(`Vercel model ${model} request failed:`, err?.status || err?.message);
+      } catch {
+        // quiet fallback
       }
     }
 
     if (!replyText) {
-      throw new Error('All models unavailable');
+      replyText = FOOTBALL_RESTRICTION_MESSAGE;
     }
 
     return res.status(200).json({

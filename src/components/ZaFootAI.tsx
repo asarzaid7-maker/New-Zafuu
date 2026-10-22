@@ -182,20 +182,22 @@ export const ZaFootAI: React.FC<ZaFootAIProps> = ({ language, user, onBackToLobb
         const decoder = new TextDecoder('utf-8');
         let accumulatedText = '';
         let streamError = '';
+        let sseBuffer = '';
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split('\n');
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split(/\r?\n/);
+          sseBuffer = lines.pop() || '';
 
           for (const line of lines) {
             const trimmed = line.trim();
             if (!trimmed || trimmed.startsWith(':')) continue;
 
             if (trimmed.startsWith('data: ')) {
-              const dataStr = trimmed.slice(6);
+              const dataStr = trimmed.slice(6).trim();
               if (dataStr === '[DONE]') {
                 break;
               }
@@ -214,10 +216,32 @@ export const ZaFootAI: React.FC<ZaFootAIProps> = ({ language, user, onBackToLobb
                   streamError = parsed.error;
                 }
               } catch {
-                // If not JSON, ignore raw data
+                // Ignore incomplete segment
               }
-            } else if (trimmed.startsWith('event: error')) {
-              // error event from server
+            }
+          }
+        }
+
+        // Flush remaining buffer
+        if (sseBuffer.trim().startsWith('data: ')) {
+          const dataStr = sseBuffer.trim().slice(6).trim();
+          if (dataStr && dataStr !== '[DONE]') {
+            try {
+              const parsed = JSON.parse(dataStr);
+              if (parsed.text) {
+                accumulatedText += parsed.text;
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantPlaceholderId
+                      ? { ...msg, content: accumulatedText }
+                      : msg
+                  )
+                );
+              } else if (parsed.error) {
+                streamError = parsed.error;
+              }
+            } catch {
+              // ignore
             }
           }
         }
@@ -257,7 +281,6 @@ export const ZaFootAI: React.FC<ZaFootAIProps> = ({ language, user, onBackToLobb
         // User aborted, do nothing
         return;
       }
-      console.error('ZaFoot AI chat error:', err);
       const serverMsg =
         err?.message && !err.message.includes('Server error')
           ? err.message
