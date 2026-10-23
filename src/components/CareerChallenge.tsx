@@ -16,10 +16,12 @@ import {
   Flame,
   Award,
   ChevronRight,
+  ChevronLeft,
   Compass,
 } from 'lucide-react';
 import { Language, UserProfile } from '../types/quiz';
 import { sounds } from '../utils/audio';
+import careerPlayersData from '../data/careerPlayers.json';
 
 export type DifficultyLevel = 'easy' | 'medium' | 'hard';
 
@@ -45,6 +47,7 @@ export interface PlayerCandidate {
 
 export interface CareerMatchQuestion {
   questionIndex: number;
+  targetPlayerId?: string;
   careerTimeline: ClubStep[];
   options: PlayerCandidate[];
 }
@@ -102,6 +105,85 @@ interface CareerChallengeProps {
   onOpenCoinShop: () => void;
 }
 
+// Local match generator helper for offline resilience & instant play
+function shuffleList<T>(arr: T[]): T[] {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function generateLocalCareerMatch(
+  diff: DifficultyLevel,
+  questionsCount: number,
+  fee: number,
+  reward: number,
+  winThreshold: number,
+  currentCoins: number
+): CareerMatchData {
+  const players = careerPlayersData as any[];
+  const easyPool = players.filter((p) => p.difficulty === 'easy');
+  const mediumPool = players.filter((p) => p.difficulty === 'medium');
+  const hardPool = players.filter((p) => p.difficulty === 'hard');
+
+  let targets: any[] = [];
+  if (diff === 'easy') {
+    targets = [...shuffleList(easyPool), ...shuffleList(mediumPool)].slice(0, questionsCount);
+  } else if (diff === 'medium') {
+    targets = [...shuffleList(mediumPool), ...shuffleList(easyPool), ...shuffleList(hardPool)].slice(0, questionsCount);
+  } else {
+    targets = [...shuffleList(hardPool), ...shuffleList(mediumPool), ...shuffleList(easyPool)].slice(0, questionsCount);
+  }
+  targets = shuffleList(targets).slice(0, questionsCount);
+
+  const questions: CareerMatchQuestion[] = targets.map((target, idx) => {
+    const namedDistractorPlayers = (target.distractors || [])
+      .map((id: string) => players.find((p) => p.id === id))
+      .filter((p: any) => p && p.id !== target.id);
+
+    const otherPlayers = players.filter(
+      (p) => p.id !== target.id && !namedDistractorPlayers.some((d: any) => d.id === p.id)
+    );
+
+    const chosenDistractors = [
+      ...shuffleList(namedDistractorPlayers).slice(0, 2),
+      ...shuffleList(otherPlayers),
+    ].slice(0, 3);
+
+    const options = shuffleList([target, ...chosenDistractors]).map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      name_ar: p.name_ar,
+      nationality: p.nationality,
+      nationality_ar: p.nationality_ar,
+      flag: p.flag,
+      photo: p.photo,
+      position: p.position,
+      position_ar: p.position_ar,
+    }));
+
+    return {
+      questionIndex: idx,
+      targetPlayerId: target.id,
+      careerTimeline: target.career,
+      options,
+    };
+  });
+
+  return {
+    matchId: 'local_ccm_' + Date.now(),
+    difficulty: diff,
+    totalQuestions: questions.length,
+    fee,
+    reward,
+    winThreshold,
+    updatedBalance: Math.max(0, currentCoins - fee),
+    questions,
+  };
+}
+
 export const CareerChallenge: React.FC<CareerChallengeProps> = ({
   language,
   user,
@@ -128,17 +210,19 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoadingMatch, setIsLoadingMatch] = useState(false);
 
-  // Difficulty Tier Definitions
+  // Difficulty Tier Definitions (Accessible and Fair Economy)
   const DIFFICULTIES = [
     {
       id: 'easy' as DifficultyLevel,
       title: language === 'ar' ? 'المستوى السهل (أساطير ونجوم العصر)' : 'Easy Level (Global Legends & Superstars)',
-      tag: language === 'ar' ? '15 سؤالاً' : '15 Questions',
-      fee: 150,
-      reward: 300,
-      winMark: '10 / 15',
+      tag: language === 'ar' ? '10 أسئلة' : '10 Questions',
+      fee: 20,
+      reward: 50,
+      winMark: '7 / 10',
       icon: Shield,
       accent: 'emerald',
+      questionsCount: 10,
+      winThreshold: 7,
       desc: {
         en: 'World-famous icons (Ronaldo, Messi, Haaland, Mbappé, Salah, De Bruyne, Benzema...) with memorable career stops.',
         ar: 'أساطير الكرة العالمية (رونالدو، ميسي، هالاند، مبابي، صلاح، دي بروين...) بمسيرات شهيرة ومحطات خالدة.',
@@ -147,12 +231,14 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
     {
       id: 'medium' as DifficultyLevel,
       title: language === 'ar' ? 'المستوى المتوسط (مسيرات رحّالة)' : 'Medium Level (Multi-Club Journeys)',
-      tag: language === 'ar' ? '20 سؤالاً' : '20 Questions',
-      fee: 300,
-      reward: 600,
-      winMark: '14 / 20',
+      tag: language === 'ar' ? '15 سؤالاً' : '15 Questions',
+      fee: 40,
+      reward: 100,
+      winMark: '11 / 15',
       icon: Flame,
       accent: 'amber',
+      questionsCount: 15,
+      winThreshold: 11,
       desc: {
         en: 'Players who played for multiple top European clubs, loans, and diverse leagues (Lukaku, Griezmann, Casemiro, Son, Di Maria...).',
         ar: 'لاعبون خاضوا تجارب في أندية كبرى متعددة وإعارات مختلفة (لوكاكو، غريزمان، كاسيميرو، سون، دي ماريا...).',
@@ -161,12 +247,14 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
     {
       id: 'hard' as DifficultyLevel,
       title: language === 'ar' ? 'المستوى الصعب (أكاديميات ومسيرات دقيقة)' : 'Hard Level (Academies & Subtle Paths)',
-      tag: language === 'ar' ? '25 سؤالاً' : '25 Questions',
-      fee: 500,
-      reward: 1000,
-      winMark: '18 / 25',
+      tag: language === 'ar' ? '20 سؤالاً' : '20 Questions',
+      fee: 80,
+      reward: 200,
+      winMark: '15 / 20',
       icon: Award,
       accent: 'rose',
+      questionsCount: 20,
+      winThreshold: 15,
       desc: {
         en: 'Youth academy roots, rising wonderkids, one-club men, and tactical steps (Palmer, Wirtz, Camavinga, Theo, Musiala...).',
         ar: 'محطات الفئات السنية، المواهب الصاعدة، ولاعبو النادي الواحد والخطوات الدقيقة (بالمر، فيرتز، كامافينغا، ثيو، موسيالا...).',
@@ -177,7 +265,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
   const currentDiffConfig =
     DIFFICULTIES.find((d) => d.id === selectedDifficulty) || DIFFICULTIES[0];
 
-  // Start a New Career Match
+  // Start a New Career Match with Safe Server/Local Fallback
   const handleStartMatch = async (diff: DifficultyLevel = selectedDifficulty) => {
     if (!user) return;
     setErrorMsg(null);
@@ -189,8 +277,8 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
     if (user.coins < targetTier.fee) {
       setErrorMsg(
         language === 'ar'
-          ? `رصيدك (${user.coins.toLocaleString()} 🪙) لا يكفي لدخول التحدي (${targetTier.fee} 🪙). يمكنك شحن العملات من المتجر.`
-          : `Your balance (${user.coins.toLocaleString()} 🪙) is insufficient for entry (${targetTier.fee} 🪙). You can top up in the Coin Shop.`
+          ? `رصيدك (${user.coins.toLocaleString()} 🪙) لا يكفي لدخول التحدي (${targetTier.fee} 🪙). يمكنك شحن العملات من المتجر بسهولة (100 عملة بدولار واحد فقط).`
+          : `Your balance (${user.coins.toLocaleString()} 🪙) is insufficient for entry (${targetTier.fee} 🪙). You can top up in the Coin Shop (100 coins for $1).`
       );
       sounds.playWrong();
       setIsLoadingMatch(false);
@@ -209,19 +297,27 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
       });
 
       const data = await res.json();
-      if (!res.ok) {
-        if (data?.currentBalance !== undefined) {
-          onUpdateCoins(data.currentBalance);
+      if (res.ok && data?.questions?.length) {
+        setMatch(data);
+        if (typeof data.updatedBalance === 'number') {
+          onUpdateCoins(data.updatedBalance);
+        } else {
+          onUpdateCoins(Math.max(0, user.coins - targetTier.fee));
         }
-        setErrorMsg(
-          language === 'ar'
-            ? data?.message_ar || 'تعذر بدء التحدي. تأكد من رصيد العملات.'
-            : data?.message || 'Failed to start challenge. Check your balance.'
+      } else {
+        // Fallback to local generator
+        const localMatch = generateLocalCareerMatch(
+          diff,
+          targetTier.questionsCount,
+          targetTier.fee,
+          targetTier.reward,
+          targetTier.winThreshold,
+          user.coins
         );
-        return;
+        setMatch(localMatch);
+        onUpdateCoins(Math.max(0, user.coins - targetTier.fee));
       }
 
-      setMatch(data);
       setCurrentIndex(0);
       setSelectedOptionId(null);
       setCurrentAnswerResult(null);
@@ -229,17 +325,25 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
       setLiveWrongCount(0);
       setGameState('playing');
       sounds.playWhistle();
-
-      // Deduct entry fee on client right away
-      if (typeof data.updatedBalance === 'number') {
-        onUpdateCoins(data.updatedBalance);
-      }
     } catch {
-      setErrorMsg(
-        language === 'ar'
-          ? 'تعذر الاتصال بالخادم. يرجى المحاولة مرة أخرى.'
-          : 'Failed to connect to game server. Please try again.'
+      // Offline fallback
+      const localMatch = generateLocalCareerMatch(
+        diff,
+        targetTier.questionsCount,
+        targetTier.fee,
+        targetTier.reward,
+        targetTier.winThreshold,
+        user.coins
       );
+      setMatch(localMatch);
+      onUpdateCoins(Math.max(0, user.coins - targetTier.fee));
+      setCurrentIndex(0);
+      setSelectedOptionId(null);
+      setCurrentAnswerResult(null);
+      setLiveCorrectCount(0);
+      setLiveWrongCount(0);
+      setGameState('playing');
+      sounds.playWhistle();
     } finally {
       setIsLoadingMatch(false);
     }
@@ -253,6 +357,8 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
     setAnswering(true);
     setErrorMsg(null);
 
+    let answerHandled = false;
+
     try {
       const res = await fetch('/api/career-challenge/answer', {
         method: 'POST',
@@ -265,26 +371,59 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
         }),
       });
 
-      const data: QuestionAnswerResult = await res.json();
-      if (!res.ok) {
-        setErrorMsg(language === 'ar' ? 'تعذر تسجيل الإجابة.' : 'Failed to register answer.');
-        return;
+      if (res.ok) {
+        const data: QuestionAnswerResult = await res.json();
+        setCurrentAnswerResult(data);
+        setLiveCorrectCount(data.correctCount);
+        setLiveWrongCount(data.wrongCount);
+
+        if (data.isCorrect) {
+          sounds.playCorrect();
+        } else {
+          sounds.playWrong();
+        }
+        answerHandled = true;
       }
+    } catch {
+      // Continue to local fallback evaluation
+    }
 
-      setCurrentAnswerResult(data);
-      setLiveCorrectCount(data.correctCount);
-      setLiveWrongCount(data.wrongCount);
+    if (!answerHandled && currentQuestion) {
+      // Resilient local fallback: look up correct player directly
+      const players = careerPlayersData as any[];
+      const targetId =
+        currentQuestion.targetPlayerId ||
+        players.find(
+          (p) => JSON.stringify(p.career) === JSON.stringify(currentQuestion.careerTimeline)
+        )?.id ||
+        currentQuestion.options[0]?.id;
 
-      if (data.isCorrect) {
+      const correctPlayer = players.find((p) => p.id === targetId) || currentQuestion.options[0];
+      const isCorrect = optionId === correctPlayer.id;
+
+      const newCorrect = isCorrect ? liveCorrectCount + 1 : liveCorrectCount;
+      const newWrong = !isCorrect ? liveWrongCount + 1 : liveWrongCount;
+
+      setLiveCorrectCount(newCorrect);
+      setLiveWrongCount(newWrong);
+
+      setCurrentAnswerResult({
+        isCorrect,
+        questionIndex: currentIndex,
+        selectedPlayerId: optionId,
+        correctPlayer,
+        correctCount: newCorrect,
+        wrongCount: newWrong,
+      });
+
+      if (isCorrect) {
         sounds.playCorrect();
       } else {
         sounds.playWrong();
       }
-    } catch {
-      setErrorMsg(language === 'ar' ? 'حدث خطأ أثناء إرسال الإجابة.' : 'Error submitting answer.');
-    } finally {
-      setAnswering(false);
     }
+
+    setAnswering(false);
   };
 
   // Move to Next Question or Finish Match
@@ -309,6 +448,8 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
     setIsFinishing(true);
     setErrorMsg(null);
 
+    let finishHandled = false;
+
     try {
       const res = await fetch('/api/career-challenge/finish', {
         method: 'POST',
@@ -319,21 +460,53 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
         }),
       });
 
-      const data: MatchFinishResult = await res.json();
-      if (!res.ok) {
-        setErrorMsg(language === 'ar' ? 'تعذر إنهاء التحدي.' : 'Failed to finish challenge.');
-        setIsFinishing(false);
-        return;
-      }
+      if (res.ok) {
+        const data: MatchFinishResult = await res.json();
+        setFinishResult(data);
+        if (typeof data.updatedBalance === 'number') {
+          onUpdateCoins(data.updatedBalance);
+        }
 
-      setFinishResult(data);
-      if (typeof data.updatedBalance === 'number') {
-        onUpdateCoins(data.updatedBalance);
-      }
+        setGameState('results');
 
+        if (data.isWin) {
+          sounds.playVictory();
+          confetti({
+            particleCount: 100,
+            spread: 70,
+            origin: { y: 0.6 },
+          });
+        } else {
+          sounds.playWhistle();
+        }
+        finishHandled = true;
+      }
+    } catch {
+      // Local fallback
+    }
+
+    if (!finishHandled) {
+      const isWin = liveCorrectCount >= match.winThreshold;
+      const coinsAwarded = isWin ? match.reward : 0;
+      const updatedBalance = user.coins + coinsAwarded;
+      if (coinsAwarded > 0) {
+        onUpdateCoins(updatedBalance);
+      }
+      setFinishResult({
+        isWin,
+        score: liveCorrectCount,
+        totalQuestions: match.totalQuestions,
+        correctCount: liveCorrectCount,
+        wrongCount: liveWrongCount,
+        winThreshold: match.winThreshold,
+        difficulty: match.difficulty,
+        feeDeducted: match.fee,
+        coinsAwarded,
+        netCoinsChange: isWin ? coinsAwarded - match.fee : -match.fee,
+        updatedBalance,
+      });
       setGameState('results');
-
-      if (data.isWin) {
+      if (isWin) {
         sounds.playVictory();
         confetti({
           particleCount: 100,
@@ -343,13 +516,9 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
       } else {
         sounds.playWhistle();
       }
-    } catch {
-      setErrorMsg(
-        language === 'ar' ? 'حدث خطأ أثناء احتساب النتيجة.' : 'Error calculating final results.'
-      );
-    } finally {
-      setIsFinishing(false);
     }
+
+    setIsFinishing(false);
   };
 
   const currentQuestion = match?.questions[currentIndex];
@@ -717,7 +886,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
                       </span>
 
                       {/* Club info */}
-                      <div className="flex flex-col text-left">
+                      <div className="flex flex-col text-start">
                         <div className="flex items-center gap-1.5">
                           <span className="text-xs sm:text-sm font-black text-white">
                             {language === 'ar' ? step.club_ar : step.club}
@@ -744,7 +913,11 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
                     {/* Connecting Chevron Arrow */}
                     {!isLast && (
                       <div className="text-emerald-400/80 font-bold shrink-0 hidden sm:block">
-                        <ChevronRight className="w-4 h-4" />
+                        {language === 'ar' ? (
+                          <ChevronLeft className="w-4 h-4" />
+                        ) : (
+                          <ChevronRight className="w-4 h-4" />
+                        )}
                       </div>
                     )}
                   </React.Fragment>

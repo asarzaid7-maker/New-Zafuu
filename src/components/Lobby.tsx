@@ -123,8 +123,8 @@ export const Lobby: React.FC<LobbyProps> = ({
               </h2>
               <p className="text-xs sm:text-sm text-slate-300 max-w-xl leading-relaxed">
                 {language === 'ar'
-                  ? 'نعرض لك سلسلة الأندية التي لعب لها النجم طوال مسيرته بالترتيب الزمني الدقيق. خمّن صاحب المسيرة من بين 4 خيارات حقيقية! 3 مستويات صعوبة وجوائز تصل إلى 1,000 عملة.'
-                  : 'Guess the mystery player from their actual chronological club transfer history! 4 choices with real photos. 3 difficulty levels and winning rewards up to 1,000 Coins.'}
+                  ? 'نعرض لك سلسلة الأندية التي لعب لها النجم طوال مسيرته بالترتيب الزمني الدقيق. خمّن صاحب المسيرة من بين 4 خيارات حقيقية! 3 مستويات صعوبة وجوائز تصل إلى 200 عملة.'
+                  : 'Guess the mystery player from their actual chronological club transfer history! 4 choices with real photos. 3 difficulty levels and winning rewards up to 200 Coins.'}
               </p>
             </div>
           </div>
@@ -132,7 +132,7 @@ export const Lobby: React.FC<LobbyProps> = ({
           <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto shrink-0">
             <div className="text-center md:text-right hidden sm:block">
               <div className="text-xs font-bold text-slate-400">{language === 'ar' ? 'المكافأة تصل إلى' : 'Rewards up to'}</div>
-              <div className="text-lg font-black text-emerald-400 tabular-nums">+1,000 🪙</div>
+              <div className="text-lg font-black text-emerald-400 tabular-nums">+200 🪙</div>
             </div>
             <button
               onClick={onPlayCareerChallenge}

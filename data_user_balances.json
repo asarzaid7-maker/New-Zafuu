@@ -11,5 +11,9 @@
   "hard_player": 400,
   "career_test_user": 100,
   "career_fresh_tester": 350,
-  "career_champion_user": 1150
+  "career_champion_user": 1150,
+  "test_user_1": 50,
+  "tester_career_path": 200,
+  "u_verify_test": 450,
+  "u_career_tester_50": 30
 }

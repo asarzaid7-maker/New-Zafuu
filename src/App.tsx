@@ -230,7 +230,7 @@ export default function App() {
     });
   };
 
-  // Purchase Coins from Coin Shop (1000 for $9.99, 5000 for $30.99, 10000 for $70.99)
+  // Purchase Coins from Coin Shop (100 for $1, 1000 for $10, 2000 for $20, or custom amount at $0.01/coin)
   const handlePurchaseCoins = (amount: number, _packName: string) => {
     setUser((prev) => {
       if (!prev) return prev;

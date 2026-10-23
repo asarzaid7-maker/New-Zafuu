@@ -12,6 +12,10 @@ import {
   AlertCircle,
   Lock,
   ExternalLink,
+  SlidersHorizontal,
+  Plus,
+  Minus,
+  Calculator,
 } from 'lucide-react';
 import { Language } from '../types/quiz';
 import { sounds } from '../utils/audio';
@@ -58,34 +62,34 @@ interface CoinPackage {
 
 export const COIN_PACKAGES: CoinPackage[] = [
   {
-    id: 'pack_1000',
-    coins: 1000,
-    price: '$9.99',
-    usd: 9.99,
+    id: 'pack_100',
+    coins: 100,
+    price: '$1.00',
+    usd: 1.00,
     name: {
-      en: 'Starter Vault',
-      ar: 'باقة الانطلاق',
+      en: 'Starter 100 Coins',
+      ar: 'باقة 100 عملة',
     },
     badge: {
-      en: 'Quick Entry',
-      ar: 'انطلاقة سريعة',
+      en: 'Entry · $1',
+      ar: 'انطلاقة · 1$',
     },
     description: {
-      en: 'Great for 100 Easy matches or 33 Hard challenges!',
-      ar: 'تكفي لـ 100 مباراة سهلة أو 33 تحدياً صعباً!',
+      en: '100 Coins for just $1! Great for quick matches and challenges.',
+      ar: '100 عملة مقابل 1$ فقط! ممتازة للمباريات السريعة والتحديات اليومية.',
     },
     color: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400',
     gradient: 'from-emerald-500/20 to-teal-500/10',
     glow: 'shadow-emerald-500/20',
   },
   {
-    id: 'pack_5000',
-    coins: 5000,
-    price: '$30.99',
-    usd: 30.99,
+    id: 'pack_1000',
+    coins: 1000,
+    price: '$10.00',
+    usd: 10.00,
     name: {
-      en: 'Pro Striker Pack',
-      ar: 'باقة المحترفين',
+      en: 'Pro Striker 1,000 Coins',
+      ar: 'باقة 1,000 عملة',
     },
     popular: true,
     badge: {
@@ -93,21 +97,21 @@ export const COIN_PACKAGES: CoinPackage[] = [
       ar: 'الأكثر طلباً 🔥',
     },
     description: {
-      en: 'Perfect for serious quiz masters & unlocking all trophies!',
-      ar: 'مثالية للمنافسين الكبار وفتح جميع كؤوس البطولة!',
+      en: '1,000 Coins for $10! Perfect for career paths and tournaments.',
+      ar: '1,000 عملة مقابل 10$! مثالية لمحترفي التحديات ومسيرة اللاعبين.',
     },
     color: 'border-amber-500/50 bg-amber-500/10 text-amber-400 ring-2 ring-amber-500/30',
     gradient: 'from-amber-500/25 to-yellow-500/10',
     glow: 'shadow-amber-500/25',
   },
   {
-    id: 'pack_10000',
-    coins: 10000,
-    price: '$70.99',
-    usd: 70.99,
+    id: 'pack_2000',
+    coins: 2000,
+    price: '$20.00',
+    usd: 20.00,
     name: {
-      en: 'Legendary Champion Stash',
-      ar: 'باقة الأساطير الذهبية',
+      en: 'Champion 2,000 Coins',
+      ar: 'خزينة 2,000 عملة',
     },
     bestValue: true,
     badge: {
@@ -115,8 +119,8 @@ export const COIN_PACKAGES: CoinPackage[] = [
       ar: 'أفضل قيمة ⭐',
     },
     description: {
-      en: 'Ultimate football trivia treasury. Dominate all leaderboards!',
-      ar: 'الخزينة الذهبية الكاملة. سيطر على كافة صدارة المسابقات!',
+      en: '2,000 Coins for $20! Ultimate power to unlock all trophies and modes.',
+      ar: '2,000 عملة مقابل 20$! رصيد وفير لفتح كافة الكؤوس وتصدر الترتيب.',
     },
     color: 'border-purple-500/50 bg-purple-500/10 text-purple-400',
     gradient: 'from-purple-500/25 to-indigo-500/10',
@@ -191,6 +195,59 @@ export const CoinShopModal: React.FC<CoinShopModalProps> = ({
   const [activeReceipt, setActiveReceipt] = useState<VerifiedOrderReceipt | null>(null);
   const [pastOrders, setPastOrders] = useState<VerifiedOrderReceipt[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
+
+  // Custom coin amount chooser state (100 coins = $1, any number allowed)
+  const [customCoins, setCustomCoins] = useState<number>(500);
+  const [customCoinsInput, setCustomCoinsInput] = useState<string>('500');
+
+  const handleCustomCoinsChange = (valStr: string) => {
+    const clean = valStr.replace(/\D/g, '');
+    setCustomCoinsInput(clean);
+    const parsed = parseInt(clean, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      setCustomCoins(parsed);
+    }
+  };
+
+  const handleAdjustCustomCoins = (delta: number) => {
+    sounds.playClick();
+    const nextVal = Math.max(10, customCoins + delta);
+    setCustomCoins(nextVal);
+    setCustomCoinsInput(nextVal.toString());
+  };
+
+  const handleSetExactCoins = (amount: number) => {
+    sounds.playClick();
+    setCustomCoins(amount);
+    setCustomCoinsInput(amount.toString());
+  };
+
+  const handleSelectCustomPack = () => {
+    const safeCoins = Math.max(1, customCoins);
+    const usd = Number((safeCoins * 0.01).toFixed(2));
+    const pack: CoinPackage = {
+      id: `pack_custom_${safeCoins}`,
+      coins: safeCoins,
+      price: `$${usd.toFixed(2)}`,
+      usd,
+      name: {
+        en: `${safeCoins.toLocaleString()} Custom Coins`,
+        ar: `${safeCoins.toLocaleString()} عملة مخصصة`,
+      },
+      badge: {
+        en: 'Custom Amount ✨',
+        ar: 'كمية مخصصة ✨',
+      },
+      description: {
+        en: `Custom top-up of ${safeCoins.toLocaleString()} ZaFoot Coins at $0.01/coin ($1 per 100 coins).`,
+        ar: `شحن مخصص لـ ${safeCoins.toLocaleString()} عملة زافوت بسعر 1$ لكل 100 عملة.`,
+      },
+      color: 'border-cyan-500/50 bg-cyan-500/10 text-cyan-400 ring-2 ring-cyan-500/30',
+      gradient: 'from-cyan-500/25 to-blue-500/10',
+      glow: 'shadow-cyan-500/25',
+    };
+    handleSelectPack(pack);
+  };
 
   // Card form fields
   const [cardNumber, setCardNumber] = useState('');
@@ -671,6 +728,114 @@ export const CoinShopModal: React.FC<CoinShopModalProps> = ({
                   </div>
                 );
               })}
+            </div>
+
+            {/* Custom Coin Amount Chooser Section */}
+            <div className="rounded-2xl border border-cyan-500/40 bg-gradient-to-br from-[#071926] via-[#091522] to-[#0d1624] p-5 sm:p-6 shadow-xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-cyan-500/20 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-400">
+                    <SlidersHorizontal className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-black text-white">
+                      {language === 'ar' ? 'حدد عدد العملات الذي تريده (أي رقم)' : 'Choose Any Number of Coins (Custom)'}
+                    </h3>
+                    <p className="text-xs text-slate-300">
+                      {language === 'ar'
+                        ? '100 عملة = 1$ فقط (0.01$ لكل عملة). اكتب أي عدد تريده!'
+                        : '100 Coins = $1.00 ($0.01 per coin). Type any custom amount!'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-bold self-start sm:self-auto">
+                  <Calculator className="w-3.5 h-3.5" />
+                  <span>{language === 'ar' ? 'السعر: 0.01$ / عملة' : 'Rate: $0.01 / Coin'}</span>
+                </div>
+              </div>
+
+              {/* Number Input & Step Controls */}
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+                <div className="sm:col-span-7 space-y-2">
+                  <label className="block text-xs font-bold text-slate-300">
+                    {language === 'ar' ? 'أدخل عدد العملات المطلوبة:' : 'Enter Desired Coin Amount:'}
+                  </label>
+                  <div className="relative flex items-center">
+                    <button
+                      type="button"
+                      onClick={() => handleAdjustCustomCoins(-50)}
+                      className="p-3 bg-slate-800 hover:bg-slate-700 text-white rounded-l-xl border border-slate-700 transition-colors cursor-pointer"
+                      title="-50 coins"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={customCoinsInput}
+                      onChange={(e) => handleCustomCoinsChange(e.target.value)}
+                      placeholder="e.g. 500"
+                      className="w-full bg-[#060c14] border-y border-slate-700 text-center text-xl sm:text-2xl font-black text-cyan-300 py-2.5 px-3 focus:outline-none focus:border-cyan-400 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleAdjustCustomCoins(50)}
+                      className="p-3 bg-slate-800 hover:bg-slate-700 text-white rounded-r-xl border border-slate-700 transition-colors cursor-pointer"
+                      title="+50 coins"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Live Price Display and Buy Button */}
+                <div className="sm:col-span-5 bg-black/40 border border-cyan-500/30 rounded-xl p-3.5 flex flex-col justify-between h-full space-y-2 text-center sm:text-right">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-400">{language === 'ar' ? 'المبلغ المطلوب:' : 'Calculated Price:'}</span>
+                    <span className="text-2xl font-black text-white tabular-nums">
+                      ${(Math.max(1, customCoins) * 0.01).toFixed(2)}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSelectCustomPack}
+                    className="w-full py-2.5 px-4 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-black rounded-lg text-xs uppercase tracking-wider shadow-lg shadow-cyan-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Coins className="w-4 h-4" />
+                    <span>
+                      {language === 'ar'
+                        ? `شراء ${Math.max(1, customCoins).toLocaleString()} عملة (${(Math.max(1, customCoins) * 0.01).toFixed(2)}$) ➔`
+                        : `Get ${Math.max(1, customCoins).toLocaleString()} Coins (${(Math.max(1, customCoins) * 0.01).toFixed(2)}$) ➔`}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+                <span className="text-slate-400 font-semibold text-[11px]">
+                  {language === 'ar' ? 'اختيارات سريعة:' : 'Quick Select:'}
+                </span>
+                {[50, 250, 500, 1500, 3000, 5000].map((amt) => {
+                  const isCurrent = customCoins === amt;
+                  return (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => handleSetExactCoins(amt)}
+                      className={`px-2.5 py-1 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+                        isCurrent
+                          ? 'border-cyan-400 bg-cyan-500/25 text-white ring-1 ring-cyan-400/40'
+                          : 'border-slate-800 bg-slate-900/80 text-slate-300 hover:border-slate-600 hover:text-white'
+                      }`}
+                    >
+                      +{amt.toLocaleString()} 🪙 (${(amt * 0.01).toFixed(2)})
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Payment Logos & Real Guarantees */}

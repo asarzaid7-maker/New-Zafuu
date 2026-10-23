@@ -408,10 +408,33 @@ interface PaymentOrder {
 }
 
 const PACKAGE_PRICES: Record<string, { coins: number; price: number }> = {
-  pack_1000: { coins: 1000, price: 9.99 },
-  pack_5000: { coins: 5000, price: 30.99 },
-  pack_10000: { coins: 10000, price: 70.99 },
+  pack_100: { coins: 100, price: 1.00 },
+  pack_1000: { coins: 1000, price: 10.00 },
+  pack_2000: { coins: 2000, price: 20.00 },
 };
+
+// Helper: validate and resolve any coin package (preset or custom amount at $0.01 per coin)
+function resolveCoinPackage(packageId: string | undefined, coins: unknown, amount: unknown): { coins: number; price: number } | null {
+  const numCoins = Math.round(Number(coins));
+  const numAmount = Number(amount);
+  if (!numCoins || numCoins <= 0 || isNaN(numCoins) || isNaN(numAmount)) return null;
+
+  // 1. Preset package match
+  if (packageId && PACKAGE_PRICES[packageId]) {
+    const preset = PACKAGE_PRICES[packageId];
+    if (preset.coins === numCoins && Math.abs(preset.price - numAmount) <= 0.05) {
+      return { coins: preset.coins, price: preset.price };
+    }
+  }
+
+  // 2. Custom package / any custom number of coins at $0.01 per coin (100 = $1, 1000 = $10, 2000 = $20, etc.)
+  const expectedPrice = Math.round(numCoins * 0.01 * 100) / 100;
+  if (Math.abs(expectedPrice - numAmount) <= 0.05) {
+    return { coins: numCoins, price: expectedPrice };
+  }
+
+  return null;
+}
 
 let ordersList: PaymentOrder[] = [];
 
@@ -442,15 +465,16 @@ app.get('/api/payments/config', (_req: Request, res: Response) => {
   res.json({
     paypalClientId: process.env.PAYPAL_CLIENT_ID || process.env.VITE_PAYPAL_CLIENT_ID || 'test',
     currency: 'USD',
+    ratePerCoin: 0.01,
     packages: PACKAGE_PRICES,
   });
 });
 
 // API: Verify PayPal Order
 app.post('/api/payments/verify-paypal', (req: Request, res: Response) => {
-  const { orderId, packageId, coins, amount, payerEmail, payerName } = req.body || {};
-  const pkg = PACKAGE_PRICES[packageId];
-  if (!pkg || pkg.coins !== coins || Math.abs(pkg.price - Number(amount)) > 0.01) {
+  const { orderId, packageId, coins, amount, payerEmail, payerName, userId } = req.body || {};
+  const resolved = resolveCoinPackage(packageId, coins, amount);
+  if (!resolved) {
     res.status(400).json({ error: 'Package and price mismatch' });
     return;
   }
@@ -458,9 +482,9 @@ app.post('/api/payments/verify-paypal', (req: Request, res: Response) => {
   const order: PaymentOrder = {
     id: 'ZF-' + Math.floor(100000 + Math.random() * 900000),
     txnId: orderId || 'PAYID-' + Date.now().toString(36).toUpperCase(),
-    packageId,
-    coins,
-    amount: pkg.price,
+    packageId: packageId || `pack_custom_${resolved.coins}`,
+    coins: resolved.coins,
+    amount: resolved.price,
     currency: 'USD',
     method: 'PayPal',
     payerDetails: {
@@ -474,9 +498,8 @@ app.post('/api/payments/verify-paypal', (req: Request, res: Response) => {
   ordersList.unshift(order);
   saveOrders();
 
-  const { userId } = req.body || {};
   if (userId) {
-    userBalances[userId] = (userBalances[userId] || 0) + coins;
+    userBalances[userId] = (userBalances[userId] || 0) + resolved.coins;
     saveBalances();
   }
 
@@ -484,15 +507,15 @@ app.post('/api/payments/verify-paypal', (req: Request, res: Response) => {
     success: true,
     order,
     updatedBalance: userId ? userBalances[userId] : undefined,
-    message: `Payment of $${pkg.price} verified via PayPal. Credited ${coins} Coins.`,
+    message: `Payment of $${resolved.price.toFixed(2)} verified via PayPal. Credited ${resolved.coins} Coins.`,
   });
 });
 
 // API: Charge Credit / Debit Card
 app.post('/api/payments/charge-card', (req: Request, res: Response) => {
-  const { packageId, coins, amount, cardHolder, last4, cardBrand, zip } = req.body || {};
-  const pkg = PACKAGE_PRICES[packageId];
-  if (!pkg || pkg.coins !== coins || Math.abs(pkg.price - Number(amount)) > 0.01) {
+  const { packageId, coins, amount, cardHolder, last4, cardBrand, zip, userId } = req.body || {};
+  const resolved = resolveCoinPackage(packageId, coins, amount);
+  if (!resolved) {
     res.status(400).json({ error: 'Package and price mismatch' });
     return;
   }
@@ -500,9 +523,9 @@ app.post('/api/payments/charge-card', (req: Request, res: Response) => {
   const order: PaymentOrder = {
     id: 'ZF-' + Math.floor(100000 + Math.random() * 900000),
     txnId: 'CHG_' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase(),
-    packageId,
-    coins,
-    amount: pkg.price,
+    packageId: packageId || `pack_custom_${resolved.coins}`,
+    coins: resolved.coins,
+    amount: resolved.price,
     currency: 'USD',
     method: 'Credit Card',
     cardDetails: {
@@ -517,9 +540,8 @@ app.post('/api/payments/charge-card', (req: Request, res: Response) => {
   ordersList.unshift(order);
   saveOrders();
 
-  const { userId } = req.body || {};
   if (userId) {
-    userBalances[userId] = (userBalances[userId] || 0) + coins;
+    userBalances[userId] = (userBalances[userId] || 0) + resolved.coins;
     saveBalances();
   }
 
@@ -527,15 +549,15 @@ app.post('/api/payments/charge-card', (req: Request, res: Response) => {
     success: true,
     order,
     updatedBalance: userId ? userBalances[userId] : undefined,
-    message: `Payment of $${pkg.price} charged to card ending in ${order.cardDetails?.last4}. Credited ${coins} Coins.`,
+    message: `Payment of $${resolved.price.toFixed(2)} charged to card ending in ${order.cardDetails?.last4}. Credited ${resolved.coins} Coins.`,
   });
 });
 
 // API: Apple Pay Payment
 app.post('/api/payments/apple-pay', (req: Request, res: Response) => {
   const { packageId, coins, amount, token, userId } = req.body || {};
-  const pkg = PACKAGE_PRICES[packageId];
-  if (!pkg || pkg.coins !== coins || Math.abs(pkg.price - Number(amount)) > 0.01) {
+  const resolved = resolveCoinPackage(packageId, coins, amount);
+  if (!resolved) {
     res.status(400).json({ error: 'Package and price mismatch' });
     return;
   }
@@ -543,9 +565,9 @@ app.post('/api/payments/apple-pay', (req: Request, res: Response) => {
   const order: PaymentOrder = {
     id: 'ZF-' + Math.floor(100000 + Math.random() * 900000),
     txnId: 'APL_' + (token ? String(token).slice(0, 14) : Date.now().toString(36).toUpperCase()),
-    packageId,
-    coins,
-    amount: pkg.price,
+    packageId: packageId || `pack_custom_${resolved.coins}`,
+    coins: resolved.coins,
+    amount: resolved.price,
     currency: 'USD',
     method: 'Apple Pay',
     status: 'COMPLETED',
@@ -556,7 +578,7 @@ app.post('/api/payments/apple-pay', (req: Request, res: Response) => {
   saveOrders();
 
   if (userId) {
-    userBalances[userId] = (userBalances[userId] || 0) + coins;
+    userBalances[userId] = (userBalances[userId] || 0) + resolved.coins;
     saveBalances();
   }
 
@@ -564,7 +586,7 @@ app.post('/api/payments/apple-pay', (req: Request, res: Response) => {
     success: true,
     order,
     updatedBalance: userId ? userBalances[userId] : undefined,
-    message: `Apple Pay payment of $${pkg.price} authorized. Credited ${coins} Coins.`,
+    message: `Apple Pay payment of $${resolved.price.toFixed(2)} authorized. Credited ${resolved.coins} Coins.`,
   });
 });
 
@@ -679,26 +701,26 @@ const CAREER_CONFIG: Record<CareerDiff, {
   name_ar: string;
 }> = {
   easy: {
-    fee: 150,
-    reward: 300,
-    questionsCount: 15,
-    winThreshold: 10, // 10/15 (~67%)
+    fee: 20,
+    reward: 50,
+    questionsCount: 10,
+    winThreshold: 7, // 7/10 (70%)
     name: 'Easy',
     name_ar: 'السهل',
   },
   medium: {
-    fee: 300,
-    reward: 600,
-    questionsCount: 20,
-    winThreshold: 14, // 14/20 (70%)
+    fee: 40,
+    reward: 100,
+    questionsCount: 15,
+    winThreshold: 11, // 11/15 (73%)
     name: 'Medium',
     name_ar: 'المتوسط',
   },
   hard: {
-    fee: 500,
-    reward: 1000,
-    questionsCount: 25,
-    winThreshold: 18, // 18/25 (72%)
+    fee: 80,
+    reward: 200,
+    questionsCount: 20,
+    winThreshold: 15, // 15/20 (75%)
     name: 'Hard',
     name_ar: 'الصعب',
   },
@@ -711,8 +733,11 @@ app.post('/api/user/sync-balance', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Missing userId' });
     return;
   }
-  if (typeof userBalances[userId] !== 'number') {
-    userBalances[userId] = typeof clientCoins === 'number' ? clientCoins : 50;
+  if (typeof clientCoins === 'number' && !isNaN(clientCoins)) {
+    userBalances[userId] = clientCoins;
+    saveBalances();
+  } else if (typeof userBalances[userId] !== 'number') {
+    userBalances[userId] = 50;
     saveBalances();
   }
   res.json({ userId, coins: userBalances[userId] });
@@ -739,8 +764,10 @@ app.post('/api/career-challenge/start', (req: Request, res: Response) => {
   const diffKey: CareerDiff = (difficulty === 'medium' || difficulty === 'hard') ? difficulty : 'easy';
   const cfg = CAREER_CONFIG[diffKey];
 
-  if (typeof userBalances[userId] !== 'number') {
-    userBalances[userId] = typeof clientCoins === 'number' ? clientCoins : 50;
+  if (typeof clientCoins === 'number' && !isNaN(clientCoins)) {
+    userBalances[userId] = clientCoins;
+  } else if (typeof userBalances[userId] !== 'number') {
+    userBalances[userId] = 50;
   }
 
   const currentBal = userBalances[userId];
