@@ -1,15 +1,21 @@
 import 'dotenv/config';
 import express, { Request, Response } from 'express';
+import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { setupOneVsOneMultiplayer } from './src/server/oneVsOneServer.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const httpServer = http.createServer(app);
+
+// Initialize 1v1 Football Challenge Real-Time WebSocket & REST Backend
+setupOneVsOneMultiplayer(app, httpServer);
 
 app.use(express.json());
 
@@ -1013,8 +1019,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`ZaFoot Server started at http://0.0.0.0:${PORT}`);
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`ZaFoot Server started with 1v1 WebSockets at http://0.0.0.0:${PORT}`);
   });
 }
 

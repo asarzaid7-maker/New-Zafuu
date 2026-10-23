@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Sparkles, Coins, Trophy, Flame, AlertCircle, Bot } from 'lucide-react';
+import { Play, Sparkles, Coins, Trophy, Flame, AlertCircle, Bot, Swords } from 'lucide-react';
 import { CategoryId, DifficultyLevel, Language, UserProfile } from '../types/quiz';
 import { CATEGORIES_META, DIFFICULTY_CONFIG } from '../data/questions';
 import { getTranslation } from '../data/translations';
@@ -15,6 +15,7 @@ interface LobbyProps {
   onOpenCoinShop: () => void;
   onPlayCareerChallenge: () => void;
   onOpenAiChat: () => void;
+  onPlayOneVsOne?: () => void;
 }
 
 export const Lobby: React.FC<LobbyProps> = ({
@@ -28,6 +29,7 @@ export const Lobby: React.FC<LobbyProps> = ({
   onOpenCoinShop,
   onPlayCareerChallenge,
   onOpenAiChat,
+  onPlayOneVsOne,
 }) => {
   const t = getTranslation(language);
   const diffConfig = DIFFICULTY_CONFIG[selectedDifficulty] || DIFFICULTY_CONFIG.easy;
@@ -81,7 +83,17 @@ export const Lobby: React.FC<LobbyProps> = ({
               <span className="text-white font-bold tabular-nums">30 🪙 ➔ +60 🪙</span>
             </div>
 
-            <div className="flex items-center gap-2 ml-auto">
+            <div className="flex items-center gap-2 ml-auto flex-wrap">
+              {onPlayOneVsOne && (
+                <button
+                  onClick={onPlayOneVsOne}
+                  className="flex items-center gap-1.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white px-3.5 py-1.5 rounded-lg text-xs font-black shadow-md shadow-violet-500/30 active:scale-95 transition-all cursor-pointer"
+                >
+                  <Swords className="w-3.5 h-3.5" />
+                  <span>{language === 'ar' ? 'تحدي 1 ضد 1 ⚔️' : '1v1 Battle ⚔️'}</span>
+                </button>
+              )}
+
               <button
                 onClick={onOpenAiChat}
                 className="flex items-center gap-1.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 px-3.5 py-1.5 rounded-lg text-xs font-black shadow-md shadow-emerald-500/20 active:scale-95 transition-all cursor-pointer"
@@ -101,6 +113,57 @@ export const Lobby: React.FC<LobbyProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Featured Special Mode: 1v1 Football Challenge (Real-Time Multiplayer) */}
+      {onPlayOneVsOne && (
+        <section className="relative rounded-2xl overflow-hidden border border-violet-500/40 bg-gradient-to-r from-[#170e2b] via-[#100d24] to-[#080b18] p-5 sm:p-7 shadow-xl group hover:border-violet-500/70 transition-all">
+          <div className="absolute top-0 right-0 w-80 h-80 bg-violet-600/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute bottom-0 left-0 w-80 h-80 bg-fuchsia-600/10 rounded-full blur-3xl pointer-events-none" />
+
+          <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+            <div className="flex items-start gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500 via-purple-600 to-fuchsia-600 flex items-center justify-center text-white font-black text-2xl shadow-lg shadow-violet-500/30 shrink-0 group-hover:scale-105 transition-transform">
+                <Swords className="w-7 h-7 text-white" />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/40 text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    {language === 'ar' ? 'أونلاين مباشر · 1 ضد 1' : 'Live Online · 1v1 Battle'}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[10px] font-bold">
+                    {language === 'ar' ? '30 سؤالاً متزامناً' : '30 Synchronized Questions'}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-slate-800 text-amber-300 text-[10px] font-bold">
+                    ⏱️ 15s {language === 'ar' ? 'لكل سؤال' : 'per question'}
+                  </span>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
+                  <span>{language === 'ar' ? 'تحدي 1 ضد 1 كروي مباشر' : '1v1 Live Football Challenge'}</span>
+                  <span className="text-xs font-black bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white px-2 py-0.5 rounded-md uppercase tracking-wider">
+                    PvP Arena
+                  </span>
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-300 max-w-xl leading-relaxed">
+                  {language === 'ar'
+                    ? 'تحدَّ أصدقاءك في معركة كروية حقيقية! أنشئ غرفة برمز خاص وشاركه، أو انضم لغرفة صديقك. 30 سؤالاً متزامناً في نفس اللحظة بدون تكرار، مع توقيت 15 ثانية ونظام كشف الفائز المباشر.'
+                    : 'Challenge your friends to a live real-time football trivia battle! Create a custom room code to share or join an existing room. Exactly 30 synchronized questions, 15-second timers, anti-cheat, and live scoring.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto shrink-0">
+              <button
+                onClick={onPlayOneVsOne}
+                className="w-full sm:w-auto px-6 py-3.5 bg-gradient-to-r from-violet-600 via-purple-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white font-black rounded-xl text-sm shadow-xl shadow-violet-500/30 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+              >
+                <Swords className="w-4 h-4" />
+                <span>{language === 'ar' ? 'دخول ساحة 1 ضد 1 ➔' : 'Enter 1v1 Arena ➔'}</span>
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Featured Special Mode: Career Path Challenge */}
       <section className="relative rounded-2xl overflow-hidden border border-emerald-500/40 bg-gradient-to-r from-[#0c1e19] via-[#091522] to-[#08101a] p-5 sm:p-7 shadow-xl">

@@ -20,6 +20,7 @@ import { SignInModal } from './components/SignInModal';
 import { TrophiesView } from './components/TrophiesView';
 import { CareerChallenge } from './components/CareerChallenge';
 import { ZaFootAI } from './components/ZaFootAI';
+import { OneVsOneChallenge } from './components/OneVsOneChallenge';
 import { sounds } from './utils/audio';
 
 const STORAGE_KEY_USER = 'zafoot_user_profile_v1';
@@ -67,7 +68,7 @@ export default function App() {
   });
 
   // Navigation & Game State
-  const [activeView, setActiveView] = useState<'lobby' | 'quiz' | 'trophies' | 'careerChallenge' | 'aiChat'>('lobby');
+  const [activeView, setActiveView] = useState<'lobby' | 'quiz' | 'trophies' | 'careerChallenge' | 'aiChat' | 'oneVsOne'>('lobby');
   const [selectedCategory, setSelectedCategory] = useState<CategoryId>('champions_league');
   const [selectedDifficulty, setSelectedDifficulty] = useState<DifficultyLevel>('easy');
   const [quizQuestions, setQuizQuestions] = useState<Question[]>([]);
@@ -392,6 +393,18 @@ export default function App() {
           />
         )}
 
+        {/* 1v1 Football Challenge View */}
+        {activeView === 'oneVsOne' && (
+          <OneVsOneChallenge
+            language={settings.language}
+            user={user}
+            onBackToLobby={() => {
+              sounds.playClick();
+              setActiveView('lobby');
+            }}
+          />
+        )}
+
         {/* Match Selection Lobby View */}
         {activeView === 'lobby' && (
           <Lobby
@@ -416,6 +429,10 @@ export default function App() {
             onOpenAiChat={() => {
               sounds.playClick();
               setActiveView('aiChat');
+            }}
+            onPlayOneVsOne={() => {
+              sounds.playClick();
+              setActiveView('oneVsOne');
             }}
           />
         )}

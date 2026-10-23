@@ -1,5 +1,5 @@
 import React from 'react';
-import { Trophy, Settings, Coins, Gift, GitCommit, Bot } from 'lucide-react';
+import { Trophy, Settings, Coins, Gift, GitCommit, Bot, Swords } from 'lucide-react';
 import { Language, UserProfile } from '../types/quiz';
 import { getTranslation } from '../data/translations';
 import { AVATAR_OPTIONS } from '../data/avatars';
@@ -8,8 +8,8 @@ interface NavbarProps {
   language: Language;
   onLanguageChange: (lang: Language) => void;
   user: UserProfile;
-  activeView: 'lobby' | 'trophies' | 'careerChallenge' | 'aiChat';
-  onNavigate: (view: 'lobby' | 'trophies' | 'careerChallenge' | 'aiChat') => void;
+  activeView: 'lobby' | 'trophies' | 'careerChallenge' | 'aiChat' | 'oneVsOne';
+  onNavigate: (view: 'lobby' | 'trophies' | 'careerChallenge' | 'aiChat' | 'oneVsOne') => void;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   onClaimDailyBonus: () => void;
@@ -68,6 +68,22 @@ export const Navbar: React.FC<NavbarProps> = ({
             }`}
           >
             {t.play}
+          </button>
+
+          {/* 1v1 Football Challenge Link */}
+          <button
+            onClick={() => onNavigate('oneVsOne')}
+            className={`flex items-center gap-1.5 whitespace-nowrap pb-0.5 border-b-2 transition-colors cursor-pointer ${
+              activeView === 'oneVsOne'
+                ? 'border-violet-400 text-white font-semibold'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Swords className="w-4 h-4 text-violet-400" />
+            <span>{language === 'ar' ? 'تحدي 1 ضد 1' : '1v1 Challenge'}</span>
+            <span className="text-[10px] bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white font-black px-1.5 py-0.2 rounded-full uppercase shadow-xs">
+              Live
+            </span>
           </button>
 
           {/* Career Path Challenge Link */}
@@ -204,6 +220,14 @@ export const Navbar: React.FC<NavbarProps> = ({
           }`}
         >
           <span>⚽</span> {t.play}
+        </button>
+        <button
+          onClick={() => onNavigate('oneVsOne')}
+          className={`flex items-center gap-1 font-semibold cursor-pointer ${
+            activeView === 'oneVsOne' ? 'text-violet-400 font-bold' : 'text-slate-400'
+          }`}
+        >
+          <Swords className="w-3.5 h-3.5 text-violet-400" /> {language === 'ar' ? '1 ضد 1' : '1v1'}
         </button>
         <button
           onClick={() => onNavigate('careerChallenge')}
