@@ -36,6 +36,7 @@ export interface PlayerSession {
   connected: boolean;
   score: number;
   correctCount: number;
+  lastSeen: number;
   currentAnswer?: {
     selectedIndex: number;
     isCorrect: boolean;
@@ -43,8 +44,14 @@ export interface PlayerSession {
   };
 }
 
+export interface RoomEvent {
+  id: number;
+  timestamp: number;
+  payload: Record<string, unknown>;
+}
+
 export interface Room1v1 {
-  code: string;
+  code: string; // 8-digit numeric string (e.g. 12345678)
   createdAt: number;
   creatorId: string;
   player1: PlayerSession;
@@ -57,9 +64,12 @@ export interface Room1v1 {
   timerTimeout?: NodeJS.Timeout;
   intermissionTimeout?: NodeJS.Timeout;
   rematchRequestedBy?: string;
+  eventSeq: number;
+  eventLog: RoomEvent[];
+  sseSubscribers: Set<Response>;
 }
 
-// In-memory rooms
+// In-memory rooms map
 const rooms = new Map<string, Room1v1>();
 
 // Load Questions from JSON
@@ -83,28 +93,68 @@ function shuffle<T>(arr: T[]): T[] {
   return copy;
 }
 
-// Helper: Generate unique 6-character room code (e.g. ZF7K29)
-const CODE_CHARS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
-function generateRoomCode(): string {
-  let code = '';
-  for (let attempt = 0; attempt < 20; attempt++) {
-    code = 'ZF';
-    for (let i = 0; i < 4; i++) {
-      code += CODE_CHARS.charAt(Math.floor(Math.random() * CODE_CHARS.length));
-    }
-    if (!rooms.has(code)) return code;
-  }
-  return 'ZF' + Math.floor(1000 + Math.random() * 9000);
+// Helper: Validate 8-digit numeric code
+export function isValid8DigitCode(code: string): boolean {
+  return /^\d{8}$/.test(String(code || '').trim());
 }
 
-// Broadcast message safely to both players
+// Helper: Clean / normalize 8-digit code
+export function normalize8DigitCode(code: string): string {
+  return String(code || '').replace(/\D/g, '').slice(0, 8);
+}
+
+// Helper: Generate unique 8-digit numeric code
+export function generate8DigitCode(): string {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const code = String(Math.floor(10000000 + Math.random() * 90000000));
+    if (!rooms.has(code)) return code;
+  }
+  return String(Math.floor(10000000 + Math.random() * 90000000));
+}
+
+// Broadcast message safely to both players (WebSockets + Server-Sent Events + EventLog)
 function broadcastToRoom(room: Room1v1, payload: Record<string, unknown>, excludeSocket?: WebSocket) {
-  const jsonStr = JSON.stringify(payload);
+  room.eventSeq = (room.eventSeq || 0) + 1;
+  const seqPayload = {
+    ...payload,
+    _seq: room.eventSeq,
+    _timestamp: Date.now(),
+  };
+
+  // 1. Append to event log for polling/sync
+  if (!room.eventLog) room.eventLog = [];
+  room.eventLog.push({
+    id: room.eventSeq,
+    timestamp: Date.now(),
+    payload: seqPayload,
+  });
+  if (room.eventLog.length > 100) {
+    room.eventLog = room.eventLog.slice(-100);
+  }
+
+  // 2. Broadcast to WebSockets
+  const jsonStr = JSON.stringify(seqPayload);
   const sockets = [room.player1?.socket, room.player2?.socket].filter(
     (s): s is WebSocket => !!s && s.readyState === WebSocket.OPEN && s !== excludeSocket
   );
   for (const s of sockets) {
-    s.send(jsonStr);
+    try {
+      s.send(jsonStr);
+    } catch {
+      // ignore broken socket
+    }
+  }
+
+  // 3. Broadcast to all active SSE subscribers
+  if (room.sseSubscribers && room.sseSubscribers.size > 0) {
+    const sseMsg = `data: ${jsonStr}\n\n`;
+    for (const res of room.sseSubscribers) {
+      try {
+        res.write(sseMsg);
+      } catch {
+        room.sseSubscribers.delete(res);
+      }
+    }
   }
 }
 
@@ -115,8 +165,8 @@ function sendToSocket(socket: WebSocket | undefined, payload: Record<string, unk
   }
 }
 
-// Sanitize room data for client consumption (never reveal secret correctIndex during active question)
-function getSafeRoomView(room: Room1v1, forPlayerId?: string) {
+// Sanitize room data for client consumption
+export function getSafeRoomView(room: Room1v1, forPlayerId?: string) {
   const currentQ = room.questions[room.currentQuestionIndex];
   return {
     code: room.code,
@@ -156,14 +206,12 @@ function getSafeRoomView(room: Room1v1, forPlayerId?: string) {
             difficulty: currentQ?.difficulty,
             question: currentQ?.question,
             options: currentQ?.options,
-            // Reveal correct answer only on round_end
-            correctIndex:
-              room.status === 'round_end' ? currentQ?.correctIndex : undefined,
-            explanation:
-              room.status === 'round_end' ? currentQ?.explanation : undefined,
+            correctIndex: room.status === 'round_end' ? currentQ?.correctIndex : undefined,
+            explanation: room.status === 'round_end' ? currentQ?.explanation : undefined,
           }
         : undefined,
     rematchRequestedBy: room.rematchRequestedBy,
+    _seq: room.eventSeq,
   };
 }
 
@@ -311,7 +359,6 @@ function restartMatchWithRematch(room: Room1v1) {
   if (room.timerTimeout) clearTimeout(room.timerTimeout);
   if (room.intermissionTimeout) clearTimeout(room.intermissionTimeout);
 
-  // Pick fresh 30 questions
   const thirtyQuestions = shuffle(questionPool).slice(0, 30);
   room.questions = thirtyQuestions;
   room.currentQuestionIndex = 0;
@@ -332,14 +379,632 @@ function restartMatchWithRematch(room: Room1v1) {
     room: getSafeRoomView(room),
   });
 
-  // Short 1s count-in before first question
   setTimeout(() => {
     startNextQuestion(room);
   }, 1000);
 }
 
-// Setup WebSocket Server and Express Routes
+// Main setup function: WebSocket + Express REST & SSE backend
 export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
+  // =========================================================================
+  // 1. REST & SSE REAL-TIME ENDPOINTS (100% PROXY COMPATIBLE)
+  // =========================================================================
+
+  // UNIFIED ROOM ENTRY: Auto-Create if room does not exist, Join if waiting, or Reconnect
+  app.post('/api/1v1/room/enter', (req: Request, res: Response) => {
+    try {
+      const { roomCode, user } = req.body || {};
+      const code = normalize8DigitCode(roomCode);
+      const targetUser = user || {};
+
+      if (!isValid8DigitCode(code)) {
+        res.status(400).json({
+          success: false,
+          error: 'INVALID_CODE',
+          message: 'Please enter a valid 8-digit numeric code (e.g. 00123456).',
+          message_ar: 'يرجى إدخال رمز صحيح مكون من 8 أرقام (مثال: 00123456).',
+        });
+        return;
+      }
+
+      const userId = targetUser.id || 'player_' + Date.now();
+      const existing = rooms.get(code);
+
+      // CASE 1: Room does not exist -> Automatically create room with Player 1 and wait
+      if (!existing) {
+        const selectedQuestions = shuffle(questionPool).slice(0, 30);
+        const newRoom: Room1v1 = {
+          code,
+          createdAt: Date.now(),
+          creatorId: userId,
+          player1: {
+            id: userId,
+            name: targetUser.name || 'Player 1',
+            avatar: targetUser.avatar || 'striker',
+            customPhoto: targetUser.customPhoto,
+            connected: true,
+            score: 0,
+            correctCount: 0,
+            lastSeen: Date.now(),
+          },
+          status: 'waiting',
+          questions: selectedQuestions,
+          currentQuestionIndex: 0,
+          questionStartTime: 0,
+          questionDurationSec: 15,
+          eventSeq: 0,
+          eventLog: [],
+          sseSubscribers: new Set(),
+        };
+
+        rooms.set(code, newRoom);
+
+        res.json({
+          success: true,
+          action: 'created',
+          roomCode: code,
+          isHost: true,
+          room: getSafeRoomView(newRoom, userId),
+        });
+        return;
+      }
+
+      // CASE 2: Player 1 reconnecting
+      if (existing.player1.id === userId) {
+        existing.player1.connected = true;
+        existing.player1.lastSeen = Date.now();
+        if (targetUser.name) existing.player1.name = targetUser.name;
+        if (targetUser.avatar) existing.player1.avatar = targetUser.avatar;
+        if (targetUser.customPhoto) existing.player1.customPhoto = targetUser.customPhoto;
+
+        res.json({
+          success: true,
+          action: 'reconnected',
+          roomCode: code,
+          isHost: true,
+          room: getSafeRoomView(existing, userId),
+        });
+        return;
+      }
+
+      // CASE 3: Player 2 reconnecting
+      if (existing.player2 && existing.player2.id === userId) {
+        existing.player2.connected = true;
+        existing.player2.lastSeen = Date.now();
+        if (targetUser.name) existing.player2.name = targetUser.name;
+        if (targetUser.avatar) existing.player2.avatar = targetUser.avatar;
+        if (targetUser.customPhoto) existing.player2.customPhoto = targetUser.customPhoto;
+
+        res.json({
+          success: true,
+          action: 'reconnected',
+          roomCode: code,
+          isHost: false,
+          room: getSafeRoomView(existing, userId),
+        });
+        return;
+      }
+
+      // CASE 4: Room already has two players (and user is neither of them)
+      if (existing.player2 && existing.player2.id !== userId) {
+        res.status(400).json({
+          success: false,
+          error: 'ROOM_FULL',
+          message: 'This room already has two players. Please choose a different 8-digit code.',
+          message_ar: 'هذه الغرفة تضم لاعبين بالفعل. يرجى اختيار رمز آخر مكون من 8 أرقام.',
+        });
+        return;
+      }
+
+      // CASE 5: Match already in progress
+      if (existing.status === 'playing' || existing.status === 'round_end') {
+        res.status(400).json({
+          success: false,
+          error: 'MATCH_IN_PROGRESS',
+          message: 'This match is already in progress between two other players.',
+          message_ar: 'المباراة جارية بالفعل بين لاعبين آخرين.',
+        });
+        return;
+      }
+
+      // CASE 6: Player 2 joins the waiting Player 1!
+      existing.player2 = {
+        id: userId,
+        name: targetUser.name || 'Player 2',
+        avatar: targetUser.avatar || 'coach',
+        customPhoto: targetUser.customPhoto,
+        connected: true,
+        score: 0,
+        correctCount: 0,
+        lastSeen: Date.now(),
+      };
+
+      existing.status = 'ready';
+
+      // Broadcast player_joined to all listeners
+      broadcastToRoom(existing, {
+        type: 'player_joined',
+        room: getSafeRoomView(existing),
+      });
+
+      // Automatically announce kickoff countdown (3 seconds) for synchronized start
+      broadcastToRoom(existing, {
+        type: 'match_starting',
+        countDownSec: 3,
+      });
+
+      if (existing.timerTimeout) clearTimeout(existing.timerTimeout);
+      existing.timerTimeout = setTimeout(() => {
+        startNextQuestion(existing);
+      }, 3000);
+
+      res.json({
+        success: true,
+        action: 'joined',
+        roomCode: code,
+        isHost: false,
+        room: getSafeRoomView(existing, userId),
+      });
+    } catch (e: any) {
+      console.error('Error in /api/1v1/room/enter:', e);
+      res.status(500).json({ success: false, error: 'SERVER_ERROR', message: e.message });
+    }
+  });
+
+  // Create Room with 8-digit numeric code (legacy alias)
+  app.post('/api/1v1/room/create', (req: Request, res: Response) => {
+    try {
+      const { roomCode, user } = req.body || {};
+      const targetUser = user || {};
+
+      let code = normalize8DigitCode(roomCode);
+      if (!isValid8DigitCode(code)) {
+        code = generate8DigitCode();
+      }
+
+      // Check if room with this code already exists
+      const existing = rooms.get(code);
+      if (existing) {
+        // If room is expired or same user is recreating it
+        const isExpired = Date.now() - existing.createdAt > 2 * 60 * 60 * 1000;
+        const isSameCreator = existing.creatorId === targetUser.id;
+        const isWaiting = existing.status === 'waiting';
+
+        if (!isExpired && !isSameCreator && !isWaiting && existing.status !== 'finished') {
+          res.status(400).json({
+            success: false,
+            error: 'CODE_IN_USE',
+            message: 'This 8-digit code is already active in another match. Choose a different 8-digit code.',
+            message_ar: 'هذا الرمز المكون من 8 أرقام قيد الاستخدام حالياً. اختر رمزاً آخر.',
+          });
+          return;
+        }
+
+        // Clean up timeouts
+        if (existing.timerTimeout) clearTimeout(existing.timerTimeout);
+        if (existing.intermissionTimeout) clearTimeout(existing.intermissionTimeout);
+      }
+
+      const selectedQuestions = shuffle(questionPool).slice(0, 30);
+      const newRoom: Room1v1 = {
+        code,
+        createdAt: Date.now(),
+        creatorId: targetUser.id || 'creator_' + Date.now(),
+        player1: {
+          id: targetUser.id || 'creator_' + Date.now(),
+          name: targetUser.name || 'Player 1',
+          avatar: targetUser.avatar || 'striker',
+          customPhoto: targetUser.customPhoto,
+          connected: true,
+          score: 0,
+          correctCount: 0,
+          lastSeen: Date.now(),
+        },
+        status: 'waiting',
+        questions: selectedQuestions,
+        currentQuestionIndex: 0,
+        questionStartTime: 0,
+        questionDurationSec: 15,
+        eventSeq: 0,
+        eventLog: [],
+        sseSubscribers: new Set(),
+      };
+
+      rooms.set(code, newRoom);
+
+      res.json({
+        success: true,
+        roomCode: code,
+        room: getSafeRoomView(newRoom),
+      });
+    } catch (e: any) {
+      console.error('Error in /api/1v1/room/create:', e);
+      res.status(500).json({ success: false, error: 'SERVER_ERROR', message: e.message });
+    }
+  });
+
+  // Join Room with 8-digit numeric code
+  app.post('/api/1v1/room/join', (req: Request, res: Response) => {
+    try {
+      const { roomCode, user } = req.body || {};
+      const code = normalize8DigitCode(roomCode);
+      const targetUser = user || {};
+
+      if (!isValid8DigitCode(code)) {
+        res.status(400).json({
+          success: false,
+          error: 'INVALID_CODE',
+          message: 'Please enter a valid 8-digit numeric code (e.g. 12345678).',
+          message_ar: 'يرجى إدخال رمز صحيح مكون من 8 أرقام (مثال: 12345678).',
+        });
+        return;
+      }
+
+      const room = rooms.get(code);
+      if (!room) {
+        res.status(404).json({
+          success: false,
+          error: 'ROOM_NOT_FOUND',
+          message: `Room with code ${code} was not found. Check the code or ask Player 1 to create it first.`,
+          message_ar: `لم يتم العثور على غرفة بالرمز ${code}. تأكد من الرمز أو اطلب من اللاعب 1 إنشاءها أولاً.`,
+        });
+        return;
+      }
+
+      const p1 = room.player1;
+      const p2 = room.player2;
+
+      // Check if re-joining as Player 1
+      if (p1.id === targetUser.id) {
+        p1.connected = true;
+        p1.lastSeen = Date.now();
+        res.json({
+          success: true,
+          roomCode: room.code,
+          room: getSafeRoomView(room, targetUser.id),
+        });
+        return;
+      }
+
+      // Check if re-joining as Player 2
+      if (p2 && p2.id === targetUser.id) {
+        p2.connected = true;
+        p2.lastSeen = Date.now();
+        res.json({
+          success: true,
+          roomCode: room.code,
+          room: getSafeRoomView(room, targetUser.id),
+        });
+        return;
+      }
+
+      // If room is full with another player
+      if (p2 && p2.id !== targetUser.id && p2.connected) {
+        res.status(400).json({
+          success: false,
+          error: 'ROOM_FULL',
+          message: 'This room is already full (2 players are already in this match).',
+          message_ar: 'هذه الغرفة ممتلئة بالفعل (لاعبان متصلان حالياً).',
+        });
+        return;
+      }
+
+      // If match is already playing or finished
+      if (room.status === 'playing' || room.status === 'round_end') {
+        res.status(400).json({
+          success: false,
+          error: 'MATCH_IN_PROGRESS',
+          message: 'Match is already in progress between two other players.',
+          message_ar: 'المباراة قد بدأت بالفعل بين لاعبين آخرين.',
+        });
+        return;
+      }
+
+      // Add as Player 2
+      const player2Id = targetUser.id || 'p2_' + Date.now();
+      room.player2 = {
+        id: player2Id,
+        name: targetUser.name || 'Player 2',
+        avatar: targetUser.avatar || 'coach',
+        customPhoto: targetUser.customPhoto,
+        connected: true,
+        score: 0,
+        correctCount: 0,
+        lastSeen: Date.now(),
+      };
+
+      room.status = 'ready';
+
+      // Broadcast to all connected listeners that Player 2 joined
+      broadcastToRoom(room, {
+        type: 'player_joined',
+        room: getSafeRoomView(room),
+      });
+
+      res.json({
+        success: true,
+        roomCode: room.code,
+        room: getSafeRoomView(room, player2Id),
+      });
+    } catch (e: any) {
+      console.error('Error in /api/1v1/room/join:', e);
+      res.status(500).json({ success: false, error: 'SERVER_ERROR', message: e.message });
+    }
+  });
+
+  // Start Match
+  app.post('/api/1v1/room/start', (req: Request, res: Response) => {
+    try {
+      const { roomCode, playerId } = req.body || {};
+      const code = normalize8DigitCode(roomCode);
+      const room = rooms.get(code);
+
+      if (!room) {
+        res.status(404).json({ success: false, error: 'ROOM_NOT_FOUND' });
+        return;
+      }
+
+      if (room.player1.id !== playerId) {
+        res.status(403).json({
+          success: false,
+          error: 'NOT_HOST',
+          message: 'Only the room creator (Player 1) can start the match.',
+          message_ar: 'منشئ الغرفة فقط هو من يملك صلاحية إطلاق صافرة البداية.',
+        });
+        return;
+      }
+
+      if (!room.player2) {
+        res.status(400).json({
+          success: false,
+          error: 'WAITING_PLAYER_2',
+          message: 'Waiting for Player 2 to enter the room before starting.',
+          message_ar: 'بانتظار انضمام اللاعب الثاني قبل بدء التحدي.',
+        });
+        return;
+      }
+
+      broadcastToRoom(room, {
+        type: 'match_starting',
+        countDownSec: 3,
+      });
+
+      setTimeout(() => {
+        startNextQuestion(room);
+      }, 3000);
+
+      res.json({ success: true, message: 'Match starting in 3s' });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // Submit Answer
+  app.post('/api/1v1/room/answer', (req: Request, res: Response) => {
+    try {
+      const { roomCode, playerId, questionIndex, selectedIndex } = req.body || {};
+      const code = normalize8DigitCode(roomCode);
+      const room = rooms.get(code);
+
+      if (!room || room.status !== 'playing') {
+        res.status(400).json({ success: false, error: 'NOT_PLAYING' });
+        return;
+      }
+
+      if (questionIndex !== room.currentQuestionIndex) {
+        res.status(400).json({ success: false, error: 'OUTDATED_QUESTION' });
+        return;
+      }
+
+      const targetPlayer = room.player1.id === playerId ? room.player1 : room.player2;
+      if (!targetPlayer) {
+        res.status(404).json({ success: false, error: 'PLAYER_NOT_IN_ROOM' });
+        return;
+      }
+
+      if (targetPlayer.currentAnswer) {
+        // Prevent double answer
+        res.json({
+          success: true,
+          alreadyAnswered: true,
+          score: targetPlayer.score,
+          correctCount: targetPlayer.correctCount,
+        });
+        return;
+      }
+
+      const currentQ = room.questions[room.currentQuestionIndex];
+      const isCorrect = Number(selectedIndex) === currentQ.correctIndex;
+      const timeTaken = Math.round((Date.now() - room.questionStartTime) / 1000);
+
+      targetPlayer.currentAnswer = {
+        selectedIndex: Number(selectedIndex),
+        isCorrect,
+        timeTaken,
+      };
+
+      if (isCorrect) {
+        targetPlayer.score += 100;
+        targetPlayer.correctCount += 1;
+      }
+
+      // Broadcast live scoreboard update to all devices
+      broadcastToRoom(room, {
+        type: 'live_score_update',
+        playerId,
+        player1Score: room.player1.score,
+        player1CorrectCount: room.player1.correctCount,
+        player2Score: room.player2 ? room.player2.score : 0,
+        player2CorrectCount: room.player2 ? room.player2.correctCount : 0,
+      });
+
+      // Notify opponent that other player answered without revealing their choice
+      broadcastToRoom(room, {
+        type: 'opponent_answered',
+        playerId,
+      });
+
+      // Check if BOTH players answered
+      const p1Answered = !!room.player1.currentAnswer;
+      const p2Answered = room.player2 ? !!room.player2.currentAnswer : true;
+
+      if (p1Answered && p2Answered) {
+        finishRound(room, 'both_answered');
+      }
+
+      res.json({
+        success: true,
+        isCorrect,
+        score: targetPlayer.score,
+        correctCount: targetPlayer.correctCount,
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // Rematch request / accept
+  app.post('/api/1v1/room/rematch', (req: Request, res: Response) => {
+    try {
+      const { roomCode, playerId, action } = req.body || {};
+      const code = normalize8DigitCode(roomCode);
+      const room = rooms.get(code);
+
+      if (!room || room.status !== 'finished') {
+        res.status(400).json({ success: false, error: 'NOT_FINISHED' });
+        return;
+      }
+
+      if (action === 'request') {
+        room.rematchRequestedBy = playerId;
+        broadcastToRoom(room, {
+          type: 'rematch_requested',
+          requesterId: playerId,
+        });
+        res.json({ success: true, status: 'requested' });
+        return;
+      }
+
+      if (action === 'accept') {
+        restartMatchWithRematch(room);
+        res.json({ success: true, status: 'started' });
+        return;
+      }
+
+      res.status(400).json({ success: false, error: 'INVALID_ACTION' });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // Server-Sent Events (SSE) Real-Time Stream for Room
+  app.get('/api/1v1/room/:code/events', (req: Request, res: Response) => {
+    const code = normalize8DigitCode(req.params.code);
+    const room = rooms.get(code);
+
+    if (!room) {
+      res.status(404).json({ error: 'Room not found' });
+      return;
+    }
+
+    const playerId = String(req.query.playerId || '');
+
+    // Set up standard SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    if (!room.sseSubscribers) {
+      room.sseSubscribers = new Set();
+    }
+    room.sseSubscribers.add(res);
+
+    // Update connection status
+    if (playerId === room.player1.id) {
+      room.player1.connected = true;
+      room.player1.lastSeen = Date.now();
+    } else if (room.player2 && playerId === room.player2.id) {
+      room.player2.connected = true;
+      room.player2.lastSeen = Date.now();
+    }
+
+    // Send initial sync payload
+    const initialMsg = JSON.stringify({
+      type: 'sync_state',
+      room: getSafeRoomView(room, playerId),
+    });
+    res.write(`data: ${initialMsg}\n\n`);
+
+    // Keep-alive heartbeat every 15s
+    const keepAlive = setInterval(() => {
+      try {
+        res.write(': ping\n\n');
+      } catch {
+        clearInterval(keepAlive);
+      }
+    }, 15000);
+
+    req.on('close', () => {
+      clearInterval(keepAlive);
+      if (room.sseSubscribers) {
+        room.sseSubscribers.delete(res);
+      }
+    });
+  });
+
+  // Polling Sync Endpoint (High-reliability fallback for any network)
+  app.get('/api/1v1/room/:code/sync', (req: Request, res: Response) => {
+    const code = normalize8DigitCode(req.params.code);
+    const room = rooms.get(code);
+
+    if (!room) {
+      res.status(404).json({ success: false, error: 'ROOM_NOT_FOUND' });
+      return;
+    }
+
+    const since = parseInt(String(req.query.since || '0'), 10);
+    const playerId = String(req.query.playerId || '');
+
+    // Update lastSeen
+    if (playerId === room.player1.id) {
+      room.player1.connected = true;
+      room.player1.lastSeen = Date.now();
+    } else if (room.player2 && playerId === room.player2.id) {
+      room.player2.connected = true;
+      room.player2.lastSeen = Date.now();
+    }
+
+    const newEvents = (room.eventLog || []).filter((e) => e.id > since);
+
+    res.json({
+      success: true,
+      room: getSafeRoomView(room, playerId),
+      events: newEvents.map((e) => e.payload),
+      lastSeq: room.eventSeq,
+    });
+  });
+
+  // Get Room Status
+  app.get('/api/1v1/room/:code', (req: Request, res: Response) => {
+    const code = normalize8DigitCode(req.params.code);
+    const room = rooms.get(code);
+
+    if (!room) {
+      res.status(404).json({ exists: false, error: 'Room not found' });
+      return;
+    }
+
+    res.json({
+      exists: true,
+      room: getSafeRoomView(room),
+    });
+  });
+
+  // =========================================================================
+  // 2. WEBSOCKET SERVER (HYBRID SECONDARY TRANSPORT)
+  // =========================================================================
   const wss = new WebSocketServer({ server, path: '/ws/1v1' });
 
   wss.on('connection', (ws: WebSocket) => {
@@ -351,14 +1016,161 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
         const data = JSON.parse(message.toString());
         const { type } = data;
 
-        // 1. CREATE ROOM
+        // ENTER ROOM (UNIFIED: AUTO-CREATE OR JOIN)
+        if (type === 'enter_room') {
+          const user = data.user || {};
+          const roomCode = normalize8DigitCode(data.roomCode);
+
+          if (!isValid8DigitCode(roomCode)) {
+            sendToSocket(ws, {
+              type: 'error',
+              code: 'INVALID_CODE',
+              message: 'Please enter a valid 8-digit numeric code (e.g. 00123456).',
+              message_ar: 'يرجى إدخال رمز صحيح مكون من 8 أرقام (مثال: 00123456).',
+            });
+            return;
+          }
+
+          const userId = user.id || 'player_' + Date.now();
+          const existing = rooms.get(roomCode);
+
+          if (!existing) {
+            const selectedQuestions = shuffle(questionPool).slice(0, 30);
+            const newRoom: Room1v1 = {
+              code: roomCode,
+              createdAt: Date.now(),
+              creatorId: userId,
+              player1: {
+                id: userId,
+                name: user.name || 'Player 1',
+                avatar: user.avatar || 'striker',
+                customPhoto: user.customPhoto,
+                socket: ws,
+                connected: true,
+                score: 0,
+                correctCount: 0,
+                lastSeen: Date.now(),
+              },
+              status: 'waiting',
+              questions: selectedQuestions,
+              currentQuestionIndex: 0,
+              questionStartTime: 0,
+              questionDurationSec: 15,
+              eventSeq: 0,
+              eventLog: [],
+              sseSubscribers: new Set(),
+            };
+
+            rooms.set(roomCode, newRoom);
+            boundRoomCode = roomCode;
+            boundPlayerId = userId;
+
+            sendToSocket(ws, {
+              type: 'room_created',
+              roomCode,
+              action: 'created',
+              room: getSafeRoomView(newRoom, userId),
+            });
+            return;
+          }
+
+          // Player 1 reconnect
+          if (existing.player1.id === userId) {
+            existing.player1.socket = ws;
+            existing.player1.connected = true;
+            existing.player1.lastSeen = Date.now();
+            boundRoomCode = roomCode;
+            boundPlayerId = userId;
+            sendToSocket(ws, {
+              type: 'room_joined',
+              roomCode,
+              action: 'reconnected',
+              room: getSafeRoomView(existing, userId),
+            });
+            return;
+          }
+
+          // Player 2 reconnect
+          if (existing.player2 && existing.player2.id === userId) {
+            existing.player2.socket = ws;
+            existing.player2.connected = true;
+            existing.player2.lastSeen = Date.now();
+            boundRoomCode = roomCode;
+            boundPlayerId = userId;
+            sendToSocket(ws, {
+              type: 'room_joined',
+              roomCode,
+              action: 'reconnected',
+              room: getSafeRoomView(existing, userId),
+            });
+            return;
+          }
+
+          // Room full
+          if (existing.player2 && existing.player2.id !== userId) {
+            sendToSocket(ws, {
+              type: 'error',
+              code: 'ROOM_FULL',
+              message: 'This room already has two players. Please choose a different 8-digit code.',
+              message_ar: 'هذه الغرفة تضم لاعبين بالفعل. يرجى اختيار رمز آخر مكون من 8 أرقام.',
+            });
+            return;
+          }
+
+          // Match in progress
+          if (existing.status === 'playing' || existing.status === 'round_end') {
+            sendToSocket(ws, {
+              type: 'error',
+              code: 'MATCH_IN_PROGRESS',
+              message: 'This match is already in progress.',
+              message_ar: 'المباراة جارية بالفعل بين لاعبين آخرين.',
+            });
+            return;
+          }
+
+          // Player 2 joins
+          existing.player2 = {
+            id: userId,
+            name: user.name || 'Player 2',
+            avatar: user.avatar || 'coach',
+            customPhoto: user.customPhoto,
+            socket: ws,
+            connected: true,
+            score: 0,
+            correctCount: 0,
+            lastSeen: Date.now(),
+          };
+
+          existing.status = 'ready';
+          boundRoomCode = roomCode;
+          boundPlayerId = userId;
+
+          broadcastToRoom(existing, {
+            type: 'player_joined',
+            room: getSafeRoomView(existing),
+          });
+
+          broadcastToRoom(existing, {
+            type: 'match_starting',
+            countDownSec: 3,
+          });
+
+          if (existing.timerTimeout) clearTimeout(existing.timerTimeout);
+          existing.timerTimeout = setTimeout(() => {
+            startNextQuestion(existing);
+          }, 3000);
+          return;
+        }
+
+        // CREATE ROOM (legacy)
         if (type === 'create_room') {
           const user = data.user || {};
-          const roomCode = generateRoomCode();
+          let roomCode = normalize8DigitCode(data.roomCode);
+          if (!isValid8DigitCode(roomCode)) {
+            roomCode = generate8DigitCode();
+          }
 
-          // Prepare 30 questions
           const selectedQuestions = shuffle(questionPool).slice(0, 30);
-
           const newRoom: Room1v1 = {
             code: roomCode,
             createdAt: Date.now(),
@@ -372,12 +1184,16 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
               connected: true,
               score: 0,
               correctCount: 0,
+              lastSeen: Date.now(),
             },
             status: 'waiting',
             questions: selectedQuestions,
             currentQuestionIndex: 0,
             questionStartTime: 0,
             questionDurationSec: 15,
+            eventSeq: 0,
+            eventLog: [],
+            sseSubscribers: new Set(),
           };
 
           rooms.set(roomCode, newRoom);
@@ -392,9 +1208,9 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
           return;
         }
 
-        // 2. JOIN ROOM
+        // JOIN ROOM
         if (type === 'join_room') {
-          const rawCode = String(data.roomCode || '').trim().toUpperCase();
+          const rawCode = normalize8DigitCode(data.roomCode);
           const user = data.user || {};
           const room = rooms.get(rawCode);
 
@@ -402,8 +1218,8 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
             sendToSocket(ws, {
               type: 'error',
               code: 'ROOM_NOT_FOUND',
-              message: 'Room not found. Check the code and try again.',
-              message_ar: 'الغرفة غير موجودة. تأكد من الرمز وحاول مجدداً.',
+              message: `Room with code ${rawCode} not found. Check the code and try again.`,
+              message_ar: `الغرفة غير موجودة بالرمز ${rawCode}. تأكد من الرمز وحاول مجدداً.`,
             });
             return;
           }
@@ -428,7 +1244,6 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
             return;
           }
 
-          // If same player or new Player 2
           const player2Id = user.id || 'p2_' + Date.now();
           room.player2 = {
             id: player2Id,
@@ -439,13 +1254,13 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
             connected: true,
             score: 0,
             correctCount: 0,
+            lastSeen: Date.now(),
           };
 
           room.status = 'ready';
           boundRoomCode = room.code;
           boundPlayerId = player2Id;
 
-          // Notify both players that Player 2 joined
           broadcastToRoom(room, {
             type: 'player_joined',
             room: getSafeRoomView(room),
@@ -453,72 +1268,10 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
           return;
         }
 
-        // 3. RECONNECT TO EXISTING ROOM
-        if (type === 'reconnect') {
-          const rawCode = String(data.roomCode || '').trim().toUpperCase();
-          const playerId = data.playerId;
-          const room = rooms.get(rawCode);
-
-          if (!room) {
-            sendToSocket(ws, {
-              type: 'error',
-              code: 'ROOM_NOT_FOUND',
-              message: 'Session expired or room does not exist.',
-              message_ar: 'انتهت صلاحية الجلسة أو الغرفة غير موجودة.',
-            });
-            return;
-          }
-
-          boundRoomCode = room.code;
-          boundPlayerId = playerId;
-
-          let playerMatched = false;
-          if (room.player1.id === playerId) {
-            room.player1.socket = ws;
-            room.player1.connected = true;
-            playerMatched = true;
-          } else if (room.player2 && room.player2.id === playerId) {
-            room.player2.socket = ws;
-            room.player2.connected = true;
-            playerMatched = true;
-          }
-
-          if (playerMatched) {
-            sendToSocket(ws, {
-              type: 'sync_state',
-              room: getSafeRoomView(room, playerId),
-            });
-            broadcastToRoom(room, {
-              type: 'player_connection_change',
-              playerId,
-              connected: true,
-            });
-          }
-          return;
-        }
-
-        // 4. START MATCH (Host only)
+        // START MATCH
         if (type === 'start_match') {
-          const room = rooms.get(data.roomCode);
-          if (!room) return;
-
-          if (room.player1.id !== data.playerId) {
-            sendToSocket(ws, {
-              type: 'error',
-              message: 'Only the room creator can start the match.',
-              message_ar: 'منشئ الغرفة فقط هو من يستطيع بدء التحدي.',
-            });
-            return;
-          }
-
-          if (!room.player2) {
-            sendToSocket(ws, {
-              type: 'error',
-              message: 'Waiting for a second player to join.',
-              message_ar: 'بانتظار انضمام الخصم الثاني لبدء التحدي.',
-            });
-            return;
-          }
+          const room = rooms.get(normalize8DigitCode(data.roomCode));
+          if (!room || room.player1.id !== data.playerId || !room.player2) return;
 
           broadcastToRoom(room, {
             type: 'match_starting',
@@ -531,9 +1284,9 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
           return;
         }
 
-        // 5. SUBMIT ANSWER
+        // SUBMIT ANSWER
         if (type === 'submit_answer') {
-          const room = rooms.get(data.roomCode);
+          const room = rooms.get(normalize8DigitCode(data.roomCode));
           if (!room || room.status !== 'playing') return;
 
           const questionIndex = data.questionIndex;
@@ -547,13 +1300,12 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
           const isCorrect = selectedIndex === currentQ.correctIndex;
 
           const targetPlayer = room.player1.id === playerId ? room.player1 : room.player2;
-          if (!targetPlayer || targetPlayer.currentAnswer) return; // Prevent double answer
+          if (!targetPlayer || targetPlayer.currentAnswer) return;
 
-          const timeTaken = Math.round((Date.now() - room.questionStartTime) / 1000);
           targetPlayer.currentAnswer = {
             selectedIndex,
             isCorrect,
-            timeTaken,
+            timeTaken: Math.round((Date.now() - room.questionStartTime) / 1000),
           };
 
           if (isCorrect) {
@@ -561,7 +1313,6 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
             targetPlayer.correctCount += 1;
           }
 
-          // Acknowledge to submitting player with updated score
           sendToSocket(ws, {
             type: 'answer_received',
             questionIndex,
@@ -571,7 +1322,6 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
             correctCount: targetPlayer.correctCount,
           });
 
-          // Broadcast real-time score update to both players
           broadcastToRoom(room, {
             type: 'live_score_update',
             playerId,
@@ -581,17 +1331,11 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
             player2CorrectCount: room.player2 ? room.player2.correctCount : 0,
           });
 
-          // Notify opponent that other player answered WITHOUT revealing choice
-          broadcastToRoom(
-            room,
-            {
-              type: 'opponent_answered',
-              playerId,
-            },
-            ws
-          );
+          broadcastToRoom(room, {
+            type: 'opponent_answered',
+            playerId,
+          }, ws);
 
-          // Check if BOTH players have answered
           const p1Answered = !!room.player1.currentAnswer;
           const p2Answered = room.player2 ? !!room.player2.currentAnswer : true;
 
@@ -601,9 +1345,9 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
           return;
         }
 
-        // 6. REQUEST REMATCH
+        // REMATCH
         if (type === 'request_rematch') {
-          const room = rooms.get(data.roomCode);
+          const room = rooms.get(normalize8DigitCode(data.roomCode));
           if (!room || room.status !== 'finished') return;
 
           room.rematchRequestedBy = data.playerId;
@@ -614,28 +1358,11 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
           return;
         }
 
-        // 7. ACCEPT REMATCH
         if (type === 'accept_rematch') {
-          const room = rooms.get(data.roomCode);
+          const room = rooms.get(normalize8DigitCode(data.roomCode));
           if (!room || room.status !== 'finished') return;
 
           restartMatchWithRematch(room);
-          return;
-        }
-
-        // 8. LEAVE ROOM
-        if (type === 'leave_room') {
-          const room = rooms.get(data.roomCode);
-          if (room) {
-            broadcastToRoom(
-              room,
-              {
-                type: 'player_left',
-                playerId: data.playerId,
-              },
-              ws
-            );
-          }
           return;
         }
       } catch (err) {
@@ -652,7 +1379,6 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
           } else if (room.player2 && room.player2.id === boundPlayerId) {
             room.player2.connected = false;
           }
-
           broadcastToRoom(room, {
             type: 'player_connection_change',
             playerId: boundPlayerId,
@@ -663,96 +1389,7 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
     });
   });
 
-  // REST API Routes for 1v1 Room checks
-  app.get('/api/1v1/room/:code', (req: Request, res: Response) => {
-    const rawCode = String(req.params.code || '').trim().toUpperCase();
-    const room = rooms.get(rawCode);
-    if (!room) {
-      res.status(404).json({ exists: false, error: 'Room not found' });
-      return;
-    }
-    res.json({
-      exists: true,
-      room: getSafeRoomView(room),
-    });
-  });
-
-  app.post('/api/1v1/create', (req: Request, res: Response) => {
-    const { user } = req.body || {};
-    const roomCode = generateRoomCode();
-    const selectedQuestions = shuffle(questionPool).slice(0, 30);
-
-    const newRoom: Room1v1 = {
-      code: roomCode,
-      createdAt: Date.now(),
-      creatorId: user?.id || 'creator_' + Date.now(),
-      player1: {
-        id: user?.id || 'creator_' + Date.now(),
-        name: user?.name || 'Player 1',
-        avatar: user?.avatar || 'striker',
-        customPhoto: user?.customPhoto,
-        connected: false,
-        score: 0,
-        correctCount: 0,
-      },
-      status: 'waiting',
-      questions: selectedQuestions,
-      currentQuestionIndex: 0,
-      questionStartTime: 0,
-      questionDurationSec: 15,
-    };
-
-    rooms.set(roomCode, newRoom);
-    res.json({
-      success: true,
-      roomCode,
-      room: getSafeRoomView(newRoom),
-    });
-  });
-
-  app.post('/api/1v1/join', (req: Request, res: Response) => {
-    const { roomCode, user } = req.body || {};
-    const rawCode = String(roomCode || '').trim().toUpperCase();
-    const room = rooms.get(rawCode);
-
-    if (!room) {
-      res.status(404).json({
-        success: false,
-        error: 'ROOM_NOT_FOUND',
-        message: 'Invalid room code.',
-        message_ar: 'رمز الغرفة غير صحيح.',
-      });
-      return;
-    }
-
-    if (room.status === 'playing' || room.status === 'round_end') {
-      res.status(400).json({
-        success: false,
-        error: 'MATCH_IN_PROGRESS',
-        message: 'Match is already in progress.',
-        message_ar: 'المباراة جارية حالياً.',
-      });
-      return;
-    }
-
-    if (room.player2 && room.player2.id !== user?.id && room.player2.connected) {
-      res.status(400).json({
-        success: false,
-        error: 'ROOM_FULL',
-        message: 'Room is already full.',
-        message_ar: 'الغرفة ممتلئة بالفعل.',
-      });
-      return;
-    }
-
-    res.json({
-      success: true,
-      roomCode: room.code,
-      room: getSafeRoomView(room),
-    });
-  });
-
-  // Clean up rooms older than 3 hours
+  // Routine cleanup of rooms older than 3 hours
   setInterval(() => {
     const now = Date.now();
     for (const [code, r] of rooms.entries()) {
@@ -762,5 +1399,5 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
         rooms.delete(code);
       }
     }
-  }, 10 * 60 * 1000);
+  }, 30 * 60 * 1000);
 }

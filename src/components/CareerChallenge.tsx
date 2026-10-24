@@ -99,7 +99,7 @@ export interface MatchFinishResult {
 
 interface CareerChallengeProps {
   language: Language;
-  user: UserProfile;
+  user: UserProfile | null;
   onUpdateCoins: (newCoins: number) => void;
   onBackToLobby: () => void;
   onOpenCoinShop: () => void;
@@ -191,11 +191,18 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
   onBackToLobby,
   onOpenCoinShop,
 }) => {
+  // Safe coins & user identifier
+  const userCoins = user?.coins ?? 50;
+  const userId = user?.id || 'guest_user';
+
   // Navigation & Match State
   const [gameState, setGameState] = useState<'difficulty' | 'playing' | 'results'>('difficulty');
   const [selectedDifficulty, setSelectedDifficulty] = useState<DifficultyLevel>('easy');
   const [match, setMatch] = useState<CareerMatchData | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
+
+  // Active question derived safely
+  const currentQuestion = match?.questions[currentIndex];
 
   // Answering State
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
@@ -267,18 +274,17 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
 
   // Start a New Career Match with Safe Server/Local Fallback
   const handleStartMatch = async (diff: DifficultyLevel = selectedDifficulty) => {
-    if (!user) return;
     setErrorMsg(null);
     setIsLoadingMatch(true);
 
     const targetTier = DIFFICULTIES.find((d) => d.id === diff) || DIFFICULTIES[0];
 
     // Client-side coin check
-    if (user.coins < targetTier.fee) {
+    if (userCoins < targetTier.fee) {
       setErrorMsg(
         language === 'ar'
-          ? `رصيدك (${user.coins.toLocaleString()} 🪙) لا يكفي لدخول التحدي (${targetTier.fee} 🪙). يمكنك شحن العملات من المتجر بسهولة (100 عملة بدولار واحد فقط).`
-          : `Your balance (${user.coins.toLocaleString()} 🪙) is insufficient for entry (${targetTier.fee} 🪙). You can top up in the Coin Shop (100 coins for $1).`
+          ? `رصيدك (${userCoins.toLocaleString()} 🪙) لا يكفي لدخول التحدي (${targetTier.fee} 🪙). يمكنك شحن العملات من المتجر بسهولة (100 عملة بدولار واحد فقط).`
+          : `Your balance (${userCoins.toLocaleString()} 🪙) is insufficient for entry (${targetTier.fee} 🪙). You can top up in the Coin Shop (100 coins for $1).`
       );
       sounds.playWrong();
       setIsLoadingMatch(false);
@@ -290,9 +296,9 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: user.id,
+          userId: userId,
           difficulty: diff,
-          clientCoins: user.coins,
+          clientCoins: userCoins,
         }),
       });
 
@@ -302,7 +308,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
         if (typeof data.updatedBalance === 'number') {
           onUpdateCoins(data.updatedBalance);
         } else {
-          onUpdateCoins(Math.max(0, user.coins - targetTier.fee));
+          onUpdateCoins(Math.max(0, userCoins - targetTier.fee));
         }
       } else {
         // Fallback to local generator
@@ -312,10 +318,10 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
           targetTier.fee,
           targetTier.reward,
           targetTier.winThreshold,
-          user.coins
+          userCoins
         );
         setMatch(localMatch);
-        onUpdateCoins(Math.max(0, user.coins - targetTier.fee));
+        onUpdateCoins(Math.max(0, userCoins - targetTier.fee));
       }
 
       setCurrentIndex(0);
@@ -333,10 +339,10 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
         targetTier.fee,
         targetTier.reward,
         targetTier.winThreshold,
-        user.coins
+        userCoins
       );
       setMatch(localMatch);
-      onUpdateCoins(Math.max(0, user.coins - targetTier.fee));
+      onUpdateCoins(Math.max(0, userCoins - targetTier.fee));
       setCurrentIndex(0);
       setSelectedOptionId(null);
       setCurrentAnswerResult(null);
@@ -351,7 +357,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
 
   // Submit Answer for the current question
   const handleSelectOption = async (optionId: string) => {
-    if (!match || !user || currentAnswerResult !== null || isAnswering) return;
+    if (!match || currentAnswerResult !== null || isAnswering || !currentQuestion) return;
 
     setSelectedOptionId(optionId);
     setAnswering(true);
@@ -367,22 +373,24 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
           matchId: match.matchId,
           questionIndex: currentIndex,
           selectedPlayerId: optionId,
-          userId: user.id,
+          userId: userId,
         }),
       });
 
       if (res.ok) {
-        const data: QuestionAnswerResult = await res.json();
-        setCurrentAnswerResult(data);
-        setLiveCorrectCount(data.correctCount);
-        setLiveWrongCount(data.wrongCount);
+        const data = await res.json();
+        if (data && data.correctPlayer) {
+          setCurrentAnswerResult(data);
+          setLiveCorrectCount(data.correctCount);
+          setLiveWrongCount(data.wrongCount);
 
-        if (data.isCorrect) {
-          sounds.playCorrect();
-        } else {
-          sounds.playWrong();
+          if (data.isCorrect) {
+            sounds.playCorrect();
+          } else {
+            sounds.playWrong();
+          }
+          answerHandled = true;
         }
-        answerHandled = true;
       }
     } catch {
       // Continue to local fallback evaluation
@@ -398,9 +406,21 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
         )?.id ||
         currentQuestion.options[0]?.id;
 
-      const correctPlayer = players.find((p) => p.id === targetId) || currentQuestion.options[0];
-      const isCorrect = optionId === correctPlayer.id;
+      const matchedStar = players.find((p) => p.id === targetId) || currentQuestion.options[0];
+      const correctPlayer = {
+        id: matchedStar.id,
+        name: matchedStar.name,
+        name_ar: matchedStar.name_ar,
+        nationality: matchedStar.nationality,
+        nationality_ar: matchedStar.nationality_ar,
+        flag: matchedStar.flag || '⚽',
+        photo: matchedStar.photo || '/assets/players/haaland_full.jpg',
+        position: matchedStar.position || 'Player',
+        position_ar: matchedStar.position_ar || 'لاعب',
+        career: matchedStar.career || currentQuestion.careerTimeline,
+      };
 
+      const isCorrect = optionId === correctPlayer.id;
       const newCorrect = isCorrect ? liveCorrectCount + 1 : liveCorrectCount;
       const newWrong = !isCorrect ? liveWrongCount + 1 : liveWrongCount;
 
@@ -428,7 +448,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
 
   // Move to Next Question or Finish Match
   const handleNextQuestion = async () => {
-    if (!match || !user) return;
+    if (!match) return;
 
     const nextIdx = currentIndex + 1;
     if (nextIdx < match.totalQuestions) {
@@ -444,7 +464,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
 
   // Finish Match and claim victory reward if won
   const handleFinishMatch = async () => {
-    if (!match || !user) return;
+    if (!match) return;
     setIsFinishing(true);
     setErrorMsg(null);
 
@@ -456,7 +476,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           matchId: match.matchId,
-          userId: user.id,
+          userId: userId,
         }),
       });
 
@@ -488,7 +508,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
     if (!finishHandled) {
       const isWin = liveCorrectCount >= match.winThreshold;
       const coinsAwarded = isWin ? match.reward : 0;
-      const updatedBalance = user.coins + coinsAwarded;
+      const updatedBalance = userCoins + coinsAwarded;
       if (coinsAwarded > 0) {
         onUpdateCoins(updatedBalance);
       }
@@ -520,8 +540,6 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
 
     setIsFinishing(false);
   };
-
-  const currentQuestion = match?.questions[currentIndex];
 
   // =========================================================================
   // RENDER SCREEN 1: DIFFICULTY SELECTION & LOBBY
@@ -570,7 +588,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
                 {language === 'ar' ? 'رصيدك الحالي' : 'Your Balance'}
               </div>
               <div className="text-sm font-extrabold text-white tabular-nums">
-                {user.coins.toLocaleString()} 🪙
+                {userCoins.toLocaleString()} 🪙
               </div>
             </div>
           </button>
@@ -582,7 +600,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
             <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-rose-400" />
             <div className="flex-1">
               <p>{errorMsg}</p>
-              {user.coins < currentDiffConfig.fee && (
+              {userCoins < currentDiffConfig.fee && (
                 <button
                   onClick={onOpenCoinShop}
                   className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs hover:bg-amber-400 transition-colors cursor-pointer"
@@ -654,7 +672,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
             {DIFFICULTIES.map((diff) => {
               const isSelected = selectedDifficulty === diff.id;
               const Icon = diff.icon;
-              const hasCoins = user.coins >= diff.fee;
+              const hasCoins = userCoins >= diff.fee;
 
               return (
                 <button
@@ -714,7 +732,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
 
                     {!hasCoins && (
                       <div className="text-[11px] text-rose-400 font-semibold pt-1 text-center">
-                        {language === 'ar' ? `تحتاج إلى ${diff.fee - user.coins} عملة إضافية` : `Need ${diff.fee - user.coins} more coins`}
+                        {language === 'ar' ? `تحتاج إلى ${diff.fee - userCoins} عملة إضافية` : `Need ${diff.fee - userCoins} more coins`}
                       </div>
                     )}
                   </div>
@@ -743,7 +761,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
           </div>
 
           <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto shrink-0">
-            {user.coins >= currentDiffConfig.fee ? (
+            {userCoins >= currentDiffConfig.fee ? (
               <button
                 onClick={() => handleStartMatch(selectedDifficulty)}
                 disabled={isLoadingMatch}
@@ -826,7 +844,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
 
               <div className="flex items-center gap-1 text-xs font-bold text-amber-300 bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-500/30">
                 <Coins className="w-3.5 h-3.5 text-amber-400" />
-                <span className="tabular-nums">{user.coins.toLocaleString()}</span>
+                <span className="tabular-nums">{userCoins.toLocaleString()}</span>
               </div>
             </div>
           </div>
@@ -964,16 +982,16 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
                     : (language === 'ar' ? 'إجابة خاطئة!' : 'Incorrect Guess!')}
                 </div>
                 <div className="text-lg font-black text-white flex items-center gap-2">
-                  <span>{currentAnswerResult.correctPlayer.flag}</span>
+                  <span>{currentAnswerResult?.correctPlayer?.flag || '⚽'}</span>
                   <span>
                     {language === 'ar'
-                      ? currentAnswerResult.correctPlayer.name_ar
-                      : currentAnswerResult.correctPlayer.name}
+                      ? (currentAnswerResult?.correctPlayer?.name_ar || currentAnswerResult?.correctPlayer?.name || '')
+                      : (currentAnswerResult?.correctPlayer?.name || '')}
                   </span>
                   <span className="text-xs text-slate-400 font-medium">
                     ({language === 'ar'
-                      ? currentAnswerResult.correctPlayer.position_ar
-                      : currentAnswerResult.correctPlayer.position})
+                      ? (currentAnswerResult?.correctPlayer?.position_ar || currentAnswerResult?.correctPlayer?.position || 'لاعب')
+                      : (currentAnswerResult?.correctPlayer?.position || 'Player')})
                   </span>
                 </div>
               </div>
@@ -1007,7 +1025,7 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
               let cardStyle = 'border-slate-800 bg-[#0d1622] hover:border-slate-600 hover:bg-[#121f30]';
 
               if (isAnswered) {
-                const isTarget = opt.id === currentAnswerResult.correctPlayer.id;
+                const isTarget = opt.id === currentAnswerResult?.correctPlayer?.id;
                 if (isTarget) {
                   cardStyle = 'border-emerald-400 bg-emerald-950/40 ring-2 ring-emerald-500 shadow-lg shadow-emerald-500/20';
                 } else if (isSelected && !isTarget) {
@@ -1031,6 +1049,9 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
                     <img
                       src={opt.photo}
                       alt={opt.name}
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = '/assets/players/haaland_full.jpg';
+                      }}
                       className="w-full h-full object-cover object-top group-hover:scale-105 transition-transform duration-300"
                       loading="lazy"
                     />
@@ -1044,14 +1065,14 @@ export const CareerChallenge: React.FC<CareerChallengeProps> = ({
                     </div>
 
                     {/* Answer Reveal Overlay Badges */}
-                    {isAnswered && opt.id === currentAnswerResult.correctPlayer.id && (
+                    {isAnswered && opt.id === currentAnswerResult?.correctPlayer?.id && (
                       <div className="absolute inset-0 bg-emerald-900/40 backdrop-blur-[1px] flex items-center justify-center">
                         <span className="p-2 rounded-full bg-emerald-500 text-slate-950 shadow-lg animate-bounce">
                           <CheckCircle2 className="w-8 h-8" />
                         </span>
                       </div>
                     )}
-                    {isAnswered && isSelected && opt.id !== currentAnswerResult.correctPlayer.id && (
+                    {isAnswered && isSelected && opt.id !== currentAnswerResult?.correctPlayer?.id && (
                       <div className="absolute inset-0 bg-rose-900/40 backdrop-blur-[1px] flex items-center justify-center">
                         <span className="p-2 rounded-full bg-rose-500 text-white shadow-lg">
                           <XCircle className="w-8 h-8" />

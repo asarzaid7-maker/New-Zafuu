@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import confetti from 'canvas-confetti';
 import {
   Users,
@@ -17,10 +17,11 @@ import {
   AlertCircle,
   Sparkles,
   Zap,
-  Shield,
-  Flame,
   LogIn,
   Crown,
+  Dices,
+  RefreshCw,
+  Wifi,
 } from 'lucide-react';
 import { Language, UserProfile } from '../types/quiz';
 import { sounds } from '../utils/audio';
@@ -58,6 +59,7 @@ interface RoomState {
   player2?: PlayerInfo;
   currentQuestion?: CurrentQuestionView;
   rematchRequestedBy?: string;
+  _seq?: number;
 }
 
 interface OneVsOneChallengeProps {
@@ -72,20 +74,21 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
   user,
   onBackToLobby,
 }) => {
-  // Navigation screen
+  // Navigation screen: 'lobby' | 'room' | 'match' | 'results'
   const [screen, setScreen] = useState<'lobby' | 'room' | 'match' | 'results'>('lobby');
 
-  // Input code state for join room
-  const [joinCodeInput, setJoinCodeInput] = useState('');
+  // 8-digit numeric room code input
+  const [roomCodeInput, setRoomCodeInput] = useState('');
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedResult, setCopiedResult] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'reconnecting' | 'idle'>('idle');
 
   // Active room data
   const [room, setRoom] = useState<RoomState | null>(null);
 
-  // Answering & round state
+  // Round / Question state
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [roundResult, setRoundResult] = useState<{
     correctIndex: number;
@@ -105,11 +108,18 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
     player2: (PlayerInfo & { accuracy: number }) | null;
   } | null>(null);
 
-  // WebSocket reference
-  const wsRef = useRef<WebSocket | null>(null);
+  // Real-Time Stream References (SSE + Sync Polling + WebSocket)
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const lastSeqRef = useRef<number>(0);
+  const boundCodeRef = useRef<string | null>(null);
 
-  // Helper to render player avatar (custom photo or stylized emoji avatar)
+  // Kickoff countdown (3s before match starts)
+  const [kickoffCountdown, setKickoffCountdown] = useState<number | null>(null);
+
+  // Helper to render player avatar
   const renderAvatar = (
     p: PlayerInfo | null | undefined,
     size: 'sm' | 'md' | 'lg' = 'md',
@@ -161,82 +171,42 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
     );
   };
 
-  // Connect WebSocket helper
-  const connectWs = (): Promise<WebSocket> => {
-    return new Promise((resolve, reject) => {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        resolve(wsRef.current);
-        return;
-      }
-
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws/1v1`;
-      const ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        wsRef.current = ws;
-        resolve(ws);
-      };
-
-      ws.onerror = (err) => {
-        console.error('1v1 WebSocket error:', err);
-        reject(err);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          handleServerMessage(data);
-        } catch (e) {
-          console.error('Failed to parse WS message:', e);
-        }
-      };
-
-      ws.onclose = () => {
-        wsRef.current = null;
-      };
-    });
-  };
-
-  // Disconnect WebSocket on unmount
-  useEffect(() => {
-    return () => {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-    };
-  }, []);
-
-  // Handle incoming server events
-  const handleServerMessage = (data: Record<string, any>) => {
+  // Process server messages uniformly (via SSE, Polling, or WebSocket)
+  const handleServerMessage = useCallback((data: Record<string, any>) => {
     const { type } = data;
+    if (!type) return;
 
-    // Room Created
-    if (type === 'room_created') {
-      setRoom(data.room);
-      setScreen('room');
-      setConnecting(false);
-      sounds.playClick();
-      return;
+    if (data._seq) {
+      lastSeqRef.current = Math.max(lastSeqRef.current, data._seq);
     }
 
-    // Player Joined Room
-    if (type === 'player_joined') {
+    // Room Created / Joined state sync
+    if (type === 'room_created' || type === 'player_joined') {
       setRoom(data.room);
-      setScreen('room');
+      setConnectionStatus('connected');
       setConnecting(false);
+      setScreen('room');
       sounds.playWhistle();
       return;
     }
 
-    // Match Starting countdown
+    // Match Starting countdown (3 seconds)
     if (type === 'match_starting') {
       sounds.playWhistle();
+      const count = data.countDownSec || 3;
+      setKickoffCountdown(count);
+      const countdownTimer = setInterval(() => {
+        setKickoffCountdown((prev) => {
+          if (prev === null || prev <= 1) {
+            clearInterval(countdownTimer);
+            return null;
+          }
+          return prev - 1;
+        });
+      }, 1000);
       return;
     }
 
-    // Question Start (New Round)
     // Live Scoreboard update (real-time points & goals update)
     if (type === 'live_score_update') {
       setRoom((prev) => {
@@ -260,43 +230,11 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
       return;
     }
 
-    // Answer Confirmation with instant score update
-    if (type === 'answer_received') {
-      if (data.score !== undefined) {
-        setRoom((prev) => {
-          if (!prev) return prev;
-          const isP1 = prev.player1.id === user.id;
-          if (isP1) {
-            return {
-              ...prev,
-              player1: {
-                ...prev.player1,
-                score: data.score,
-                correctCount: data.correctCount ?? prev.player1.correctCount,
-                hasAnsweredCurrent: true,
-              },
-            };
-          } else if (prev.player2) {
-            return {
-              ...prev,
-              player2: {
-                ...prev.player2,
-                score: data.score,
-                correctCount: data.correctCount ?? prev.player2.correctCount,
-                hasAnsweredCurrent: true,
-              },
-            };
-          }
-          return prev;
-        });
-      }
-      return;
-    }
-
     // Question Start (New Round)
     if (type === 'question_start') {
       setSelectedOption(null);
       setRoundResult(null);
+      setKickoffCountdown(null);
       setTimeLeft(data.durationSec || 15);
 
       setRoom((prev) => {
@@ -399,7 +337,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
         };
       });
 
-      // Play audio feedback for local player
+      // Audio feedback for local player
       const isPlayer1 = room?.player1.id === user.id;
       const myResult = isPlayer1 ? data.player1Result : data.player2Result;
       if (myResult?.isCorrect) {
@@ -435,9 +373,10 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
       return;
     }
 
-    // Sync State after reconnect
+    // Sync State
     if (type === 'sync_state') {
       setRoom(data.room);
+      setConnectionStatus('connected');
       if (data.room.status === 'playing' || data.room.status === 'round_end') {
         setScreen('match');
       } else if (data.room.status === 'finished') {
@@ -494,55 +433,157 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
       sounds.playWrong();
       return;
     }
+  }, [language, room?.player1.id, user.id]);
+
+  // Connect Real-Time Subscriptions (SSE + Polling + Non-blocking WS)
+  const connectRealtime = useCallback((roomCode: string) => {
+    boundCodeRef.current = roomCode;
+
+    // 1. Close existing SSE and Poller
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    if (syncIntervalRef.current) {
+      clearInterval(syncIntervalRef.current);
+      syncIntervalRef.current = null;
+    }
+
+    // 2. Start Server-Sent Events (SSE) Stream
+    try {
+      const sseUrl = `/api/1v1/room/${roomCode}/events?playerId=${encodeURIComponent(user.id)}`;
+      const es = new EventSource(sseUrl);
+
+      es.onopen = () => {
+        setConnectionStatus('connected');
+      };
+
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleServerMessage(data);
+        } catch (e) {
+          console.warn('Failed to parse SSE payload:', e);
+        }
+      };
+
+      es.onerror = () => {
+        // SSE browser automatically retries; polling provides instant backup
+        setConnectionStatus('reconnecting');
+      };
+
+      eventSourceRef.current = es;
+    } catch (e) {
+      console.warn('SSE creation error:', e);
+    }
+
+    // 3. Start High-Reliability Polling Sync (every 1000ms)
+    syncIntervalRef.current = setInterval(async () => {
+      if (!boundCodeRef.current) return;
+      try {
+        const resp = await fetch(
+          `/api/1v1/room/${roomCode}/sync?since=${lastSeqRef.current}&playerId=${encodeURIComponent(user.id)}`
+        );
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.events && Array.isArray(data.events) && data.events.length > 0) {
+            for (const ev of data.events) {
+              handleServerMessage(ev);
+            }
+          }
+          if (data.room && data.room.status) {
+            setRoom((prev) => {
+              if (!prev) return data.room;
+              return {
+                ...prev,
+                status: data.room.status,
+                player1: data.room.player1,
+                player2: data.room.player2,
+                currentQuestionIndex: data.room.currentQuestionIndex,
+                currentQuestion: data.room.currentQuestion || prev.currentQuestion,
+              };
+            });
+          }
+          setConnectionStatus('connected');
+        }
+      } catch {
+        // non-blocking
+      }
+    }, 1000);
+
+    // 4. Optional parallel WebSocket (non-blocking fallback)
+    try {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws/1v1`;
+      const ws = new WebSocket(wsUrl);
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleServerMessage(data);
+        } catch {}
+      };
+
+      wsRef.current = ws;
+    } catch {
+      // WS is non-essential since SSE + REST are active
+    }
+  }, [handleServerMessage, user.id]);
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      boundCodeRef.current = null;
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+      if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
+      if (eventSourceRef.current) eventSourceRef.current.close();
+      if (wsRef.current) wsRef.current.close();
+    };
+  }, []);
+
+  // Quick helper to generate a random 8-digit numeric code
+  const handleGenerateRandomCode = () => {
+    const code = String(Math.floor(10000000 + Math.random() * 90000000));
+    setRoomCodeInput(code);
+    sounds.playClick();
   };
 
-  // 1. Action: Create Room
-  const handleCreateRoom = async () => {
-    setErrorMessage(null);
-    setConnecting(true);
-    sounds.playClick();
-
+  // Helper to paste 8-digit code from clipboard
+  const handlePasteCode = async () => {
     try {
-      const ws = await connectWs();
-      ws.send(
-        JSON.stringify({
-          type: 'create_room',
-          user: {
-            id: user.id,
-            name: user.username,
-            avatar: user.avatar,
-            customPhoto: user.customPhoto,
-          },
-        })
-      );
-    } catch {
-      setConnecting(false);
+      const text = await navigator.clipboard.readText();
+      const digits = text.replace(/\D/g, '').slice(0, 8);
+      if (digits) {
+        setRoomCodeInput(digits);
+        sounds.playClick();
+      }
+    } catch {}
+  };
+
+  // Unified Action: Enter Room with 8-digit numeric code (Auto-creates if not exists, Joins if waiting)
+  const handleEnterRoom = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setErrorMessage(null);
+
+    const cleanCode = roomCodeInput.replace(/\D/g, '').slice(0, 8);
+    if (cleanCode.length !== 8) {
       setErrorMessage(
         language === 'ar'
-          ? 'تعذر الاتصال بخادم التحدي المباشر. تأكد من اتصال الإنترنت.'
-          : 'Failed to connect to multiplayer server. Check your connection.'
+          ? 'يرجى إدخال رمز مكون من 8 أرقام (مثال: 00123456).'
+          : 'Please enter an 8-digit numeric code (e.g. 00123456).'
       );
-    }
-  };
-
-  // 2. Action: Join Room
-  const handleJoinRoom = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    const cleanCode = joinCodeInput.trim().toUpperCase();
-    if (!cleanCode) {
-      setErrorMessage(language === 'ar' ? 'يرجى كتابة رمز الغرفة.' : 'Please enter a room code.');
+      sounds.playWrong();
       return;
     }
 
-    setErrorMessage(null);
     setConnecting(true);
     sounds.playClick();
 
     try {
-      const ws = await connectWs();
-      ws.send(
-        JSON.stringify({
-          type: 'join_room',
+      const response = await fetch('/api/1v1/room/enter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           roomCode: cleanCode,
           user: {
             id: user.id,
@@ -550,72 +591,148 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
             avatar: user.avatar,
             customPhoto: user.customPhoto,
           },
-        })
-      );
-    } catch {
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        setConnecting(false);
+        setErrorMessage(
+          language === 'ar'
+            ? data.message_ar || data.message || 'تعذر الاتصال بالمباراة.'
+            : data.message || 'Failed to connect to multiplayer match.'
+        );
+        sounds.playWrong();
+        return;
+      }
+
+      setRoom(data.room);
+      setConnecting(false);
+      connectRealtime(data.roomCode);
+
+      if (data.room.status === 'playing') {
+        setScreen('match');
+      } else if (data.room.status === 'finished') {
+        setScreen('results');
+      } else {
+        setScreen('room');
+      }
+
+      sounds.playWhistle();
+    } catch (e: any) {
       setConnecting(false);
       setErrorMessage(
         language === 'ar'
-          ? 'تعذر الاتصال بخادم التحدي المباشر.'
-          : 'Failed to connect to multiplayer server.'
+          ? 'تعذر الاتصال بخادم المباريات. تحقق من اتصال الإنترنت.'
+          : 'Failed to connect to multiplayer server. Check your connection.'
       );
+      sounds.playWrong();
     }
   };
 
-  // 3. Action: Start Match (Creator only)
-  const handleStartMatch = () => {
-    if (!room || !wsRef.current) return;
+  // Action: Start Match (Creator immediate trigger or override)
+  const handleStartMatch = async () => {
+    if (!room) return;
     sounds.playClick();
-    wsRef.current.send(
-      JSON.stringify({
-        type: 'start_match',
-        roomCode: room.code,
-        playerId: user.id,
-      })
-    );
+
+    try {
+      await fetch('/api/1v1/room/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomCode: room.code,
+          playerId: user.id,
+        }),
+      });
+    } catch {}
   };
 
   // 4. Action: Submit Answer for current question
-  const handleSubmitOption = (optionIndex: number) => {
-    if (!room || room.status !== 'playing' || selectedOption !== null || !wsRef.current) return;
+  const handleSubmitOption = async (optionIndex: number) => {
+    if (!room || room.status !== 'playing' || selectedOption !== null) return;
 
     setSelectedOption(optionIndex);
     sounds.playClick();
 
-    wsRef.current.send(
-      JSON.stringify({
-        type: 'submit_answer',
-        roomCode: room.code,
-        playerId: user.id,
-        questionIndex: room.currentQuestionIndex,
-        selectedIndex: optionIndex,
-      })
-    );
+    try {
+      const res = await fetch('/api/1v1/room/answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomCode: room.code,
+          playerId: user.id,
+          questionIndex: room.currentQuestionIndex,
+          selectedIndex: optionIndex,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        // Update local score immediately for instant response
+        if (data.score !== undefined) {
+          setRoom((prev) => {
+            if (!prev) return prev;
+            const isP1 = prev.player1.id === user.id;
+            if (isP1) {
+              return {
+                ...prev,
+                player1: {
+                  ...prev.player1,
+                  score: data.score,
+                  correctCount: data.correctCount ?? prev.player1.correctCount,
+                  hasAnsweredCurrent: true,
+                },
+              };
+            } else if (prev.player2) {
+              return {
+                ...prev,
+                player2: {
+                  ...prev.player2,
+                  score: data.score,
+                  correctCount: data.correctCount ?? prev.player2.correctCount,
+                  hasAnsweredCurrent: true,
+                },
+              };
+            }
+            return prev;
+          });
+        }
+      }
+    } catch {}
   };
 
   // 5. Action: Rematch
-  const handleRequestRematch = () => {
-    if (!room || !wsRef.current) return;
+  const handleRequestRematch = async () => {
+    if (!room) return;
     sounds.playClick();
-    wsRef.current.send(
-      JSON.stringify({
-        type: 'request_rematch',
-        roomCode: room.code,
-        playerId: user.id,
-      })
-    );
+    try {
+      await fetch('/api/1v1/room/rematch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomCode: room.code,
+          playerId: user.id,
+          action: 'request',
+        }),
+      });
+    } catch {}
   };
 
-  const handleAcceptRematch = () => {
-    if (!room || !wsRef.current) return;
+  const handleAcceptRematch = async () => {
+    if (!room) return;
     sounds.playClick();
-    wsRef.current.send(
-      JSON.stringify({
-        type: 'accept_rematch',
-        roomCode: room.code,
-        playerId: user.id,
-      })
-    );
+    try {
+      await fetch('/api/1v1/room/rematch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomCode: room.code,
+          playerId: user.id,
+          action: 'accept',
+        }),
+      });
+    } catch {}
   };
 
   // Copy Room Code Helper
@@ -653,9 +770,11 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
   const ArrowIcon = language === 'ar' ? ArrowLeft : ArrowRight;
 
   // =========================================================================
-  // SCREEN 1: LOBBY (Create Room or Join Room)
+  // SCREEN 1: LOBBY (Enter 8-digit numeric code to Create or Join Room)
   // =========================================================================
   if (screen === 'lobby') {
+    const is8DigitValid = /^\d{8}$/.test(roomCodeInput.trim());
+
     return (
       <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-8 animate-fadeIn">
         {/* Top Header */}
@@ -673,19 +792,20 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
                 <Swords className="w-6 h-6" />
               </span>
               <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                {language === 'ar' ? 'تحدي 1 ضد 1 المباشر' : '1v1 Football Challenge'}
+                {language === 'ar' ? 'تحدي 1 ضد 1 المباشر أونلاين' : '1v1 Online Football Battle'}
               </h1>
             </div>
             <p className="text-xs sm:text-sm text-slate-400 max-w-2xl leading-relaxed">
               {language === 'ar'
-                ? 'تحدَّ أصدقاءك في معركة كروية مباشرة عبر الإنترنت! 30 سؤالاً حقيقياً في نفس اللحظة مع مؤقت 15 ثانية لكل سؤال.'
-                : 'Challenge your friends to a live real-time football battle! 30 synchronized questions, 15 seconds per round, and head-to-head live scoring.'}
+                ? 'تحدَّ أصدقاءك على جهازين منفصلين عبر الإنترنت! يدخل كلا اللاعبين نفس الرمز المكون من 8 أرقام لبدء معركة الـ 30 سؤالاً.'
+                : 'Challenge friends on separate devices over the internet! Both players enter the identical 8-digit code to play a live 30-question match.'}
             </p>
           </div>
 
-          <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 px-3.5 py-1.5 rounded-xl text-emerald-400 text-xs font-bold">
+          <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 px-3.5 py-1.5 rounded-xl text-emerald-400 text-xs font-bold shadow-sm">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>{language === 'ar' ? 'خادم التحدي متصل ومباشر' : 'Multiplayer Server Live'}</span>
+            <Wifi className="w-3.5 h-3.5" />
+            <span>{language === 'ar' ? 'خادم التحدي المباشر متصل' : 'Online Multiplayer Live'}</span>
           </div>
         </div>
 
@@ -697,7 +817,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
           </div>
         )}
 
-        {/* 1v1 Highlights Banner */}
+        {/* 1v1 Highlights Strip */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center font-black shrink-0">
@@ -705,10 +825,10 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
             </div>
             <div>
               <div className="font-bold text-white">
-                {language === 'ar' ? '30 سؤالاً للمباراة' : '30 Questions Per Match'}
+                {language === 'ar' ? '30 سؤالاً في كل مباراة' : '30 Questions Per Match'}
               </div>
               <div className="text-slate-400 text-[11px]">
-                {language === 'ar' ? 'نفس الأسئلة والترتيب لكلا اللاعبين' : 'Same questions in identical order'}
+                {language === 'ar' ? 'نفس الأسئلة والترتيب لكلا اللاعبين' : 'Synchronized identical questions'}
               </div>
             </div>
           </div>
@@ -719,56 +839,108 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
             </div>
             <div>
               <div className="font-bold text-white">
-                {language === 'ar' ? '15 ثانية لكل سؤال' : '15s Countdown Timer'}
+                {language === 'ar' ? '15 ثانية لكل سؤال' : '15s Synchronized Timer'}
               </div>
               <div className="text-slate-400 text-[11px]">
-                {language === 'ar' ? 'إجابات مستقلة وسرعة حاسمة' : 'Synchronized real-time round clock'}
+                {language === 'ar' ? 'إجابات مستقلة وسرعة حاسمة' : 'Independent real-time round clock'}
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-black shrink-0">
-              +100
+              8#
             </div>
             <div>
               <div className="font-bold text-white">
-                {language === 'ar' ? '100 نقطة لكل إجابة' : '100 Pts Per Correct Answer'}
+                {language === 'ar' ? 'رمز 8 أرقام من اختياركما' : '8-Digit Custom Numeric Code'}
               </div>
               <div className="text-slate-400 text-[11px]">
-                {language === 'ar' ? 'نقاط فورية وسجل مبارزة تفاعلي' : 'Authoritative live scoring & rematch'}
+                {language === 'ar' ? 'أدخل نفس الرمز على جهازين مختلفين' : 'Enter identical code on two devices'}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Main 2 Action Cards: Create Room or Join Room */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
-          {/* CARD 1: CREATE ROOM */}
-          <div className="rounded-2xl border border-slate-800 bg-gradient-to-b from-[#0c1828] via-[#09121e] to-[#060c14] p-6 sm:p-8 flex flex-col justify-between hover:border-amber-500/50 transition-all shadow-xl space-y-6 group">
-            <div className="space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-slate-950 font-black text-2xl shadow-lg shadow-amber-500/25 group-hover:scale-105 transition-transform">
-                <Sparkles className="w-7 h-7" />
+        {/* Central 8-Digit Room Entry Hub */}
+        <div className="max-w-2xl mx-auto rounded-3xl border border-slate-800 bg-gradient-to-b from-[#0b1726] via-[#08121f] to-[#040910] p-6 sm:p-10 shadow-2xl space-y-8">
+          <div className="text-center space-y-2">
+            <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-black uppercase tracking-wider inline-flex items-center gap-1.5 shadow">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>{language === 'ar' ? 'رمز الغرفة المباشر (8 أرقام)' : '8-Digit Room Code'}</span>
+            </span>
+            <h2 className="text-2xl sm:text-3xl font-black text-white">
+              {language === 'ar' ? 'أدخل رمز الغرفة المكون من 8 أرقام' : 'Enter 8-Digit Numeric Code'}
+            </h2>
+            <p className="text-xs sm:text-sm text-slate-300 max-w-md mx-auto leading-relaxed">
+              {language === 'ar'
+                ? 'اتفق مع منافسك على نفس الرمز المكون من 8 أرقام. يدخل اللاعب الأول وينتظر، ويدخل اللاعب الثاني نفس الرمز للانضمام فوراً.'
+                : 'Both players choose the same 8-digit code. The first player enters and waits; the second player enters the same code to join.'}
+            </p>
+          </div>
+
+          <form onSubmit={handleEnterRoom} className="space-y-6">
+            {/* 8-Digit Input Field */}
+            <div className="space-y-3">
+              <div className="relative">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={8}
+                  placeholder="00123456"
+                  value={roomCodeInput}
+                  onChange={(e) => {
+                    const cleaned = e.target.value.replace(/\D/g, '').slice(0, 8);
+                    setRoomCodeInput(cleaned);
+                    setErrorMessage(null);
+                  }}
+                  className="w-full bg-[#050b12] border-2 border-slate-700 focus:border-amber-400 rounded-2xl px-4 py-4 text-2xl sm:text-4xl font-black tracking-[0.3em] text-center text-amber-300 font-mono shadow-inner outline-none transition-all placeholder:text-slate-600 placeholder:tracking-normal"
+                />
+                {roomCodeInput.length > 0 && (
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-mono text-slate-400 font-bold">
+                    {roomCodeInput.length}/8
+                  </div>
+                )}
               </div>
 
-              <div className="space-y-1.5">
-                <div className="text-xs font-black uppercase tracking-wider text-amber-400">
-                  {language === 'ar' ? 'الخيار الأول · المضيف' : 'Option 1 · Host Match'}
-                </div>
-                <h2 className="text-2xl font-black text-white">
-                  {language === 'ar' ? 'إنشاء غرفة تحدي جديدة' : 'Create a New Room'}
-                </h2>
-                <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-                  {language === 'ar'
-                    ? 'أنشئ غرفة واحصل على رمز فريد (مثل ZF7K29). شارك الرمز مع صديقك، وعندما ينضم اضغط ابدأ التحدي!'
-                    : 'Create a room to get a unique code (e.g. ZF7K29). Share it with your rival and start when both are connected!'}
-                </p>
-              </div>
+              {/* Quick Helper Tools */}
+              <div className="flex items-center justify-center gap-2 pt-1 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleGenerateRandomCode}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold border border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Dices className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{language === 'ar' ? 'توليد 8 أرقام عشوائية' : 'Generate 8 Digits'}</span>
+                </button>
 
-              {/* Creator preview slot */}
-              <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 flex items-center gap-3">
-                {renderAvatar(
-                  {
+                <button
+                  type="button"
+                  onClick={handlePasteCode}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold border border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>{language === 'ar' ? 'لصق الرمز' : 'Paste Code'}</span>
+                </button>
+
+                {roomCodeInput.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setRoomCodeInput('')}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800/60 hover:bg-slate-800 text-slate-400 hover:text-rose-400 text-xs font-bold transition-all cursor-pointer"
+                  >
+                    {language === 'ar' ? 'مسح' : 'Clear'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Current Player Preview Strip */}
+            <div className="p-3.5 bg-slate-900/80 rounded-2xl border border-slate-800 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <FootballAvatar
+                  player={{
                     id: user.id,
                     name: user.username,
                     avatar: user.avatar,
@@ -776,88 +948,84 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
                     connected: true,
                     score: 0,
                     correctCount: 0,
-                  },
-                  'sm',
-                  'border-amber-500/40'
-                )}
+                  }}
+                  size="sm"
+                />
                 <div>
-                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <div className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
                     <span>{user.username}</span>
-                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-black">
-                      {language === 'ar' ? 'المضيف (اللاعب 1)' : 'Host (P1)'}
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                      {language === 'ar' ? 'حسابك' : 'You'}
                     </span>
                   </div>
                   <div className="text-[11px] text-slate-400">
-                    {language === 'ar' ? 'جاهز لإنشاء المعركة' : 'Ready to create room'}
+                    {language === 'ar' ? 'جاهز للمنافسة الأونلاين' : 'Ready for online duel'}
                   </div>
                 </div>
               </div>
+
+              <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>{language === 'ar' ? 'أونلاين' : 'Online'}</span>
+              </div>
             </div>
 
-            <button
-              onClick={handleCreateRoom}
-              disabled={connecting}
-              className="w-full py-3.5 px-6 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black rounded-xl text-sm shadow-lg shadow-amber-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-            >
-              <Swords className="w-4 h-4" />
-              <span>
-                {connecting
-                  ? (language === 'ar' ? 'جارٍ إنشاء الغرفة...' : 'Creating Room...')
-                  : (language === 'ar' ? 'إنشاء الغرفة الآن ➔' : 'Create Room Now ➔')}
-              </span>
-            </button>
-          </div>
-
-          {/* CARD 2: JOIN ROOM */}
-          <div className="rounded-2xl border border-slate-800 bg-gradient-to-b from-[#091522] via-[#07111c] to-[#050b12] p-6 sm:p-8 flex flex-col justify-between hover:border-cyan-500/50 transition-all shadow-xl space-y-6 group">
-            <div className="space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center text-slate-950 font-black text-2xl shadow-lg shadow-cyan-500/25 group-hover:scale-105 transition-transform">
-                <LogIn className="w-7 h-7" />
-              </div>
-
-              <div className="space-y-1.5">
-                <div className="text-xs font-black uppercase tracking-wider text-cyan-400">
-                  {language === 'ar' ? 'الخيار الثاني · الضيف' : 'Option 2 · Guest Match'}
+            {/* Single Primary Action Button: Connect to Online Match */}
+            <div>
+              <button
+                type="submit"
+                disabled={connecting || !is8DigitValid}
+                className="w-full py-4 px-6 bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black rounded-2xl text-base sm:text-lg shadow-xl shadow-amber-500/25 active:scale-98 transition-all flex flex-col items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-center gap-2">
+                  {connecting ? (
+                    <RefreshCw className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Swords className="w-5 h-5 fill-slate-950" />
+                  )}
+                  <span>
+                    {connecting
+                      ? (language === 'ar' ? 'جارٍ الاتصال بالمباراة...' : 'Connecting to Match...')
+                      : (language === 'ar' ? 'الاتصال بالمباراة الأونلاين' : 'Connect to Online Match')}
+                  </span>
                 </div>
-                <h2 className="text-2xl font-black text-white">
-                  {language === 'ar' ? 'الانضمام إلى غرفة صديق' : 'Join a Friend\x27s Room'}
-                </h2>
-                <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                <span className="text-[11px] font-bold text-slate-900/80">
                   {language === 'ar'
-                    ? 'هل شارك صديقك معك رمز غرفة؟ أدخل الرمز أدناه وانضم إليه فوراً لتصبح اللاعب 2 في نفس المباراة.'
-                    : 'Got a room code from a friend? Enter the 6-character code below to join as Player 2 instantly.'}
-                </p>
-              </div>
-
-              <form onSubmit={handleJoinRoom} className="space-y-3">
-                <label className="block text-xs font-bold text-slate-300">
-                  {language === 'ar' ? 'رمز الغرفة (مثال: ZF7K29):' : 'Room Code (e.g. ZF7K29):'}
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    maxLength={8}
-                    placeholder="ZF7K29"
-                    value={joinCodeInput}
-                    onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
-                    className="w-full bg-[#050b12] border border-slate-700 rounded-xl px-4 py-3 text-lg font-black tracking-widest text-center text-cyan-300 uppercase focus:outline-none focus:border-cyan-400 font-mono shadow-inner"
-                  />
-                </div>
-              </form>
+                    ? 'اللاعب الأول ينشئ وينتظر · اللاعب الثاني ينضم بنفس الرمز'
+                    : 'First player enters & waits · Second player enters same code to join'}
+                </span>
+              </button>
             </div>
+          </form>
 
-            <button
-              onClick={() => handleJoinRoom()}
-              disabled={connecting || !joinCodeInput.trim()}
-              className="w-full py-3.5 px-6 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-black rounded-xl text-sm shadow-lg shadow-cyan-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-            >
-              <LogIn className="w-4 h-4" />
-              <span>
-                {connecting
-                  ? (language === 'ar' ? 'جارٍ الانضمام...' : 'Joining Room...')
-                  : (language === 'ar' ? 'انضم إلى المباراة ➔' : 'Join Room ➔')}
-              </span>
-            </button>
+          {/* Simple step-by-step instructions banner */}
+          <div className="p-4 rounded-2xl bg-slate-900/50 border border-slate-800/80 text-xs text-slate-400 space-y-2">
+            <div className="font-bold text-white flex items-center gap-1.5">
+              <span>💡</span>
+              <span>{language === 'ar' ? 'كيف يعمل التحدي الأونلاين؟' : 'How 1v1 Online Matchmaking Works:'}</span>
+            </div>
+            <ol className="list-decimal list-inside space-y-1.5 text-[11px] sm:text-xs text-slate-300">
+              <li>
+                {language === 'ar'
+                  ? 'اتفق مع منافسك على أي رمز مكون من 8 أرقام (مثال: 00123456).'
+                  : 'Choose any 8-digit code with your opponent (e.g. 00123456).'}
+              </li>
+              <li>
+                {language === 'ar'
+                  ? 'يدخل اللاعب الأول الرمز، فيتم إنشاء الغرفة تلقائياً وينتظر منافسه.'
+                  : 'The first player enters the code to automatically create the room and wait.'}
+              </li>
+              <li>
+                {language === 'ar'
+                  ? 'يدخل اللاعب الثاني نفس الرمز تماماً من جهازه للانضمام فوراً.'
+                  : 'The second player enters the identical code on their device to join.'}
+              </li>
+              <li>
+                {language === 'ar'
+                  ? 'بمجرد اتصال كلا اللاعبين، تبدأ معركة الـ 30 سؤالاً الكروية مباشرة مع لوحة نتائج متزامنة!'
+                  : 'Once both connect, the 30-question quiz kicks off with synchronized timers and scores!'}
+              </li>
+            </ol>
           </div>
         </div>
       </div>
@@ -880,6 +1048,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
               if (window.confirm(language === 'ar' ? 'هل تريد مغادرة الغرفة؟' : 'Leave this room?')) {
                 setScreen('lobby');
                 setRoom(null);
+                boundCodeRef.current = null;
               }
             }}
             className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
@@ -889,14 +1058,20 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
           </button>
 
           <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span
+              className={`w-2.5 h-2.5 rounded-full ${
+                connectionStatus === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-ping'
+              }`}
+            />
             <span className="text-xs font-bold text-slate-300">
-              {language === 'ar' ? 'غرفة حية ومباشرة' : 'Live Room Connected'}
+              {connectionStatus === 'connected'
+                ? (language === 'ar' ? 'متصل بالخادم المباشر' : 'Live Room Connected')
+                : (language === 'ar' ? 'جارٍ المزامنة...' : 'Syncing...')}
             </span>
           </div>
         </div>
 
-        {/* Professional Live Scoreboard displayed as soon as both players enter the room */}
+        {/* Live Scoreboard displayed at top when both players enter the room */}
         {isPlayer2Joined && (
           <div className="space-y-2 animate-fadeIn">
             <div className="flex items-center justify-between text-xs font-bold text-slate-400 px-1">
@@ -918,21 +1093,21 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
           </div>
         )}
 
-        {/* Room Code Display Card */}
-        <div className="bg-gradient-to-br from-[#0c1a29] via-[#08121d] to-[#040a10] border border-amber-500/40 rounded-2xl p-6 sm:p-8 text-center space-y-4 shadow-2xl relative overflow-hidden">
+        {/* 8-Digit Room Code Card */}
+        <div className="bg-gradient-to-br from-[#0c1a29] via-[#08121d] to-[#040a10] border border-amber-500/40 rounded-3xl p-6 sm:p-8 text-center space-y-4 shadow-2xl relative overflow-hidden">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-black uppercase tracking-wider">
             <Crown className="w-3.5 h-3.5" />
-            <span>{language === 'ar' ? 'رمز الغرفة للمشاركة' : 'Room Code to Share'}</span>
+            <span>{language === 'ar' ? 'رمز الغرفة (8 أرقام)' : '8-Digit Room Code'}</span>
           </div>
 
           <div className="space-y-1">
-            <div className="text-4xl sm:text-6xl font-black text-white tracking-widest font-mono py-1 select-all drop-shadow-md">
+            <div className="text-4xl sm:text-6xl font-black text-white tracking-[0.25em] font-mono py-2 select-all drop-shadow-md">
               {room.code}
             </div>
             <p className="text-xs sm:text-sm text-slate-300 max-w-md mx-auto">
               {language === 'ar'
-                ? 'انسخ الرمز وشاركه مع منافسك عبر واتساب أو أي تطبيق للانضمام فوراً للمباراة.'
-                : 'Share this code with your friend so they can join this head-to-head match!'}
+                ? 'أعطِ هذا الرمز المكون من 8 أرقام لمنافسك ليدخله من جهازه وينضم فوراً للمباراة.'
+                : 'Share this 8-digit code with your friend so they can join on their device!'}
             </p>
           </div>
 
@@ -942,7 +1117,11 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
               className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-amber-500/25 active:scale-95 transition-all cursor-pointer"
             >
               {copiedCode ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              <span>{copiedCode ? (language === 'ar' ? 'تم النسخ بنجاح!' : 'Copied!') : (language === 'ar' ? 'نسخ الرمز' : 'Copy Room Code')}</span>
+              <span>
+                {copiedCode
+                  ? (language === 'ar' ? 'تم نسخ الرمز بنجاح!' : 'Code Copied!')
+                  : (language === 'ar' ? 'نسخ الرمز المكون من 8 أرقام' : 'Copy 8-Digit Code')}
+              </span>
             </button>
           </div>
         </div>
@@ -951,18 +1130,23 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative">
           {/* PLAYER 1 (Host) */}
           <div className="rounded-2xl border border-slate-700 bg-[#09121f] p-5 sm:p-6 flex items-center gap-4 relative shadow-lg">
-            {renderAvatar(room.player1, 'lg', 'border-amber-400', 'P1')}
+            <FootballAvatar player={room.player1} size="lg" isCurrent={room.player1.id === user.id} side="left" />
 
             <div className="space-y-1 flex-1">
               <div className="flex items-center gap-2">
                 <span className="text-base sm:text-lg font-black text-white">{room.player1.name}</span>
                 <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/30">
-                  {language === 'ar' ? 'المضيف' : 'Host'}
+                  {language === 'ar' ? 'المضيف (P1)' : 'Host (P1)'}
                 </span>
+                {room.player1.id === user.id && (
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                    {language === 'ar' ? 'أنت' : 'You'}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold">
                 <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span>{language === 'ar' ? 'متصل وجاهز' : 'Connected'}</span>
+                <span>{language === 'ar' ? 'متصل وجاهز للمباراة' : 'Connected & Ready'}</span>
               </div>
             </div>
           </div>
@@ -977,18 +1161,23 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
           >
             {isPlayer2Joined && room.player2 ? (
               <>
-                {renderAvatar(room.player2, 'lg', 'border-cyan-400', 'P2')}
+                <FootballAvatar player={room.player2} size="lg" isCurrent={room.player2.id === user.id} side="right" />
 
                 <div className="space-y-1 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-base sm:text-lg font-black text-white">{room.player2.name}</span>
                     <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px] font-bold border border-cyan-500/30">
-                      {language === 'ar' ? 'المنافس' : 'Challenger'}
+                      {language === 'ar' ? 'المنافس (P2)' : 'Challenger (P2)'}
                     </span>
+                    {room.player2.id === user.id && (
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                        {language === 'ar' ? 'أنت' : 'You'}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold">
                     <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                    <span>{language === 'ar' ? 'متصل وجاهز' : 'Connected'}</span>
+                    <span>{language === 'ar' ? 'متصل وجاهز للمباراة' : 'Connected & Ready'}</span>
                   </div>
                 </div>
               </>
@@ -1001,7 +1190,9 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
                   {language === 'ar' ? 'بانتظار انضمام اللاعب الثاني...' : 'Waiting for Player 2 to join...'}
                 </div>
                 <p className="text-xs text-slate-500">
-                  {language === 'ar' ? 'أعطِ رمز الغرفة لصديقك للدخول' : 'Share room code with your friend'}
+                  {language === 'ar'
+                    ? `أعطِ الرمز ${room.code} لصديقك ليدخله من جهازه`
+                    : `Tell your friend to enter code ${room.code} on their device`}
                 </p>
               </div>
             )}
@@ -1014,11 +1205,28 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
             <div className="space-y-3">
               <div className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/30">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>{language === 'ar' ? 'كلا اللاعبين متصلان الآن! جاهزون لانطلاق صافرة البداية' : 'Both players connected! Ready for kickoff'}</span>
+                <span>
+                  {language === 'ar'
+                    ? 'كلا اللاعبين متصلان الآن! جاهزون لانطلاق صافرة بداية الـ 30 سؤالاً'
+                    : 'Both players connected! Ready for 30-question kickoff'}
+                </span>
               </div>
 
               <div>
-                {isHost ? (
+                {kickoffCountdown !== null ? (
+                  <div className="py-2 space-y-1">
+                    <div className="text-amber-400 font-black text-2xl sm:text-3xl animate-bounce">
+                      {language === 'ar'
+                        ? `صافرة البداية خلال ${kickoffCountdown}... ⚡`
+                        : `Kickoff in ${kickoffCountdown}... ⚡`}
+                    </div>
+                    <p className="text-xs text-slate-300">
+                      {language === 'ar'
+                        ? 'استعد! السؤال 1 من الـ 30 سؤالاً سينطلق الآن'
+                        : 'Get ready! Question 1 of 30 launching now'}
+                    </p>
+                  </div>
+                ) : isHost ? (
                   <button
                     onClick={handleStartMatch}
                     className="px-8 py-3.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-xl text-base shadow-xl shadow-emerald-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer mx-auto"
@@ -1028,7 +1236,9 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
                   </button>
                 ) : (
                   <div className="text-sm font-bold text-amber-300 animate-pulse py-2">
-                    {language === 'ar' ? 'بانتظار المضيف لإطلاق صافرة بداية المباراة...' : 'Waiting for host to kick off the match...'}
+                    {language === 'ar'
+                      ? 'بانتظار المضيف أو انطلاق صافرة البداية...'
+                      : 'Waiting for match kickoff...'}
                   </div>
                 )}
               </div>
@@ -1036,8 +1246,8 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
           ) : (
             <div className="text-xs sm:text-sm text-slate-400 py-2">
               {language === 'ar'
-                ? 'لا يمكنك بدء المباراة حتى ينضم اللاعب الثاني باستخدام رمز الغرفة أعلاه.'
-                : 'Match will become available as soon as Player 2 enters the room code above.'}
+                ? `لا يمكنك بدء المباراة حتى ينضم اللاعب الثاني باستخدام رمز الغرفة (${room.code}) أعلاه.`
+                : `Match will become available as soon as Player 2 enters code ${room.code} above.`}
             </div>
           )}
         </div>
@@ -1046,25 +1256,15 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
   }
 
   // =========================================================================
-  // SCREEN 3: LIVE 1V1 MATCH HUD
+  // SCREEN 3: LIVE 1V1 MATCH HUD (30 Synchronized Questions)
   // =========================================================================
   if (screen === 'match' && room && room.currentQuestion) {
     const q = room.currentQuestion;
     const isP1 = room.player1.id === user.id;
     const opponent = isP1 ? room.player2 : room.player1;
-    const me = isP1 ? room.player1 : room.player2;
 
     const progressPct = ((room.currentQuestionIndex + 1) / room.totalQuestions) * 100;
     const isRoundEnd = room.status === 'round_end' && roundResult !== null;
-
-    // Timer visual coloring
-    const isUrgent = timeLeft <= 4;
-    const isWarning = timeLeft <= 7 && timeLeft > 4;
-    const timerColorClass = isUrgent
-      ? 'text-rose-400 border-rose-500/60 bg-rose-500/20 animate-pulse'
-      : isWarning
-      ? 'text-amber-400 border-amber-500/60 bg-amber-500/20'
-      : 'text-emerald-400 border-emerald-500/60 bg-emerald-500/20';
 
     return (
       <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4 sm:py-8 space-y-6 animate-fadeIn">
@@ -1106,7 +1306,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
               {q.category ? q.category.replace('_', ' ').toUpperCase() : 'FOOTBALL TRIVIA'}
             </span>
             <span className="text-amber-400 font-bold flex items-center gap-1">
-              <span>+100</span> {language === 'ar' ? 'نقطة' : 'Pts'}
+              <span>+100</span> {language === 'ar' ? 'نقطة / هدف' : 'Pts / Goal'}
             </span>
           </div>
 
@@ -1185,7 +1385,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
               <span>
                 {opponent?.hasAnsweredCurrent
                   ? (language === 'ar' ? 'الخصم أجاب أيضاً! جارٍ إعلان النتيجة...' : 'Opponent has also answered! Closing round...')
-                  : (language === 'ar' ? 'تم تسجيل إجابتك! بانتظار إجابة الخصم أو انتهاء الـ 15 ثانية...' : 'Answer locked in! Waiting for opponent or countdown timer...')}
+                  : (language === 'ar' ? 'تم تسجيل إجابتك! بانتظار إجابة الخصم أو انتهاء الـ 15 ثانية...' : 'Answer locked in! Waiting for opponent or timer...')}
               </span>
             </div>
           )}
@@ -1195,7 +1395,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
             <div className="p-4 bg-slate-900/90 border border-slate-700 rounded-xl text-xs sm:text-sm space-y-1.5 animate-fadeIn">
               <div className="font-bold text-emerald-400 flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4" />
-                <span>{language === 'ar' ? 'الإجابة الصحيحة وشرح الهدف:' : 'Correct Answer & Football Fact:'}</span>
+                <span>{language === 'ar' ? 'الإجابة الصحيحة وحقيقة الهدف:' : 'Correct Answer & Football Fact:'}</span>
               </div>
               <p className="text-slate-300 leading-relaxed">
                 {language === 'ar' ? roundResult.explanation?.ar : roundResult.explanation?.en}
