@@ -528,6 +528,13 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
                 currentQuestion: data.room.currentQuestion || prev.currentQuestion,
               };
             });
+
+            // Keep screen in lockstep with server room status
+            if (data.room.status === 'playing' || data.room.status === 'round_end') {
+              setScreen('match');
+            } else if (data.room.status === 'finished') {
+              setScreen('results');
+            }
           }
           setConnectionStatus('connected');
         }
@@ -664,11 +671,42 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
 
       if (!response.ok || !data?.success) {
         setConnecting(false);
-        setErrorMessage(
-          language === 'ar'
-            ? data?.message_ar || data?.message || 'تعذر الاتصال بالمباراة.'
-            : data?.message || 'Failed to connect to multiplayer match.'
-        );
+        const serverError = data?.error;
+        let humanMessage = language === 'ar' ? data?.message_ar || data?.message : data?.message;
+        if (!humanMessage) {
+          if (serverError === 'ROOM_FULL') {
+            humanMessage =
+              language === 'ar'
+                ? 'هذه الغرفة تضم لاعبين نشطين بالفعل. يرجى اختيار رمز آخر مكون من 8 أرقام.'
+                : 'This room already has two active players. Please choose a different 8-digit code.';
+          } else if (serverError === 'MATCH_IN_PROGRESS') {
+            humanMessage =
+              language === 'ar'
+                ? 'المباراة جارية بالفعل بين لاعبين آخرين. يرجى اختيار رمز آخر.'
+                : 'This match is already in progress between two other players. Please choose a different code.';
+          } else if (serverError === 'INVALID_CODE') {
+            humanMessage =
+              language === 'ar'
+                ? 'يرجى إدخال رمز صحيح مكون من 8 أرقام (مثال: 00123456).'
+                : 'Please enter a valid 8-digit numeric code (e.g. 00123456).';
+          } else if (response.status >= 500) {
+            humanMessage =
+              language === 'ar'
+                ? `تعذر الاتصال بخادم المباريات (رمز الخطأ: ${response.status}). أعد المحاولة.`
+                : `Multiplayer server encountered an error (${response.status}). Please retry.`;
+          } else if (serverError) {
+            humanMessage =
+              language === 'ar'
+                ? `تعذر الدخول للمباراة (${serverError}).`
+                : `Failed to join match (${serverError}).`;
+          } else {
+            humanMessage =
+              language === 'ar'
+                ? 'تعذر الاتصال بالمباراة. تحقق من الرمز وحاول مجدداً.'
+                : 'Failed to connect to multiplayer match. Check the code and retry.';
+          }
+        }
+        setErrorMessage(humanMessage);
         sounds.playWrong();
         return;
       }
@@ -861,6 +899,39 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
     setCopiedResult(true);
     sounds.playClick();
     setTimeout(() => setCopiedResult(false), 2000);
+  };
+
+  // Leave Room Action: notifies backend to immediately free or reset room
+  const handleLeaveRoom = () => {
+    if (room?.code) {
+      try {
+        fetch('/api/1v1/room/leave', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            roomCode: room.code,
+            playerId: currentSessionPlayerId,
+          }),
+        }).catch(() => {});
+      } catch {}
+    }
+    boundCodeRef.current = null;
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    if (syncIntervalRef.current) {
+      clearInterval(syncIntervalRef.current);
+      syncIntervalRef.current = null;
+    }
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    setRoom(null);
+    setScreen('lobby');
+    setKickoffCountdown(null);
+    sounds.playClick();
   };
 
   const ArrowIcon = language === 'ar' ? ArrowLeft : ArrowRight;
@@ -1140,13 +1211,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
         {/* Top bar with back button */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-4">
           <button
-            onClick={() => {
-              if (window.confirm(language === 'ar' ? 'هل تريد مغادرة الغرفة؟' : 'Leave this room?')) {
-                setScreen('lobby');
-                setRoom(null);
-                boundCodeRef.current = null;
-              }
-            }}
+            onClick={handleLeaveRoom}
             className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
           >
             <ArrowIcon className="w-3.5 h-3.5" />

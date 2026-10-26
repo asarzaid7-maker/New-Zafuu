@@ -414,6 +414,34 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
       const userId = targetUser.id || 'player_' + Date.now();
       const existing = rooms.get(code);
 
+      // Helper to cleanly reset an existing room for a brand new match
+      const resetRoom = (targetRoom: Room1v1) => {
+        if (targetRoom.timerTimeout) clearTimeout(targetRoom.timerTimeout);
+        if (targetRoom.intermissionTimeout) clearTimeout(targetRoom.intermissionTimeout);
+
+        const selectedQuestions = shuffle(questionPool).slice(0, 30);
+        targetRoom.status = 'waiting';
+        targetRoom.createdAt = Date.now();
+        targetRoom.creatorId = userId;
+        targetRoom.questions = selectedQuestions;
+        targetRoom.currentQuestionIndex = 0;
+        targetRoom.questionStartTime = 0;
+        targetRoom.rematchRequestedBy = undefined;
+        targetRoom.player1 = {
+          id: userId,
+          name: targetUser.name || 'Player 1',
+          avatar: targetUser.avatar || 'striker',
+          customPhoto: targetUser.customPhoto,
+          connected: true,
+          score: 0,
+          correctCount: 0,
+          lastSeen: Date.now(),
+        };
+        targetRoom.player2 = undefined;
+        targetRoom.eventSeq = (targetRoom.eventSeq || 0) + 1;
+        targetRoom.eventLog = [];
+      };
+
       // CASE 1: Room does not exist -> Automatically create room with Player 1 and wait
       if (!existing) {
         const selectedQuestions = shuffle(questionPool).slice(0, 30);
@@ -453,27 +481,25 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
         return;
       }
 
-      // CASE 1.5: Room exists but was finished -> Reset room cleanly for a brand new match!
-      if (existing.status === 'finished') {
-        const selectedQuestions = shuffle(questionPool).slice(0, 30);
-        existing.status = 'waiting';
-        existing.createdAt = Date.now();
-        existing.creatorId = userId;
-        existing.questions = selectedQuestions;
-        existing.currentQuestionIndex = 0;
-        existing.questionStartTime = 0;
-        existing.rematchRequestedBy = undefined;
-        existing.player1 = {
-          id: userId,
-          name: targetUser.name || 'Player 1',
-          avatar: targetUser.avatar || 'striker',
-          customPhoto: targetUser.customPhoto,
-          connected: true,
-          score: 0,
-          correctCount: 0,
-          lastSeen: Date.now(),
-        };
-        existing.player2 = undefined;
+      // Stale room detection:
+      // 1. Finished match
+      // 2. Room older than 30 minutes
+      // 3. Waiting room where the host disconnected or abandoned (> 30s ago)
+      // 4. Any match where both players disconnected (> 25s ago)
+      const now = Date.now();
+      const isFinished = existing.status === 'finished';
+      const isVeryOld = now - existing.createdAt > 30 * 60 * 1000;
+      const isHostAbandoned =
+        existing.status === 'waiting' &&
+        existing.player1.id !== userId &&
+        (!existing.player1.connected || now - existing.player1.lastSeen > 30000);
+      const isBothPlayersGone =
+        !existing.player1.connected &&
+        (!existing.player2 || !existing.player2.connected) &&
+        now - Math.max(existing.player1.lastSeen, existing.player2?.lastSeen || 0) > 25000;
+
+      if (isFinished || isVeryOld || isHostAbandoned || isBothPlayersGone) {
+        resetRoom(existing);
         res.json({
           success: true,
           action: 'created',
@@ -487,7 +513,7 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
       // CASE 2: Player 1 reconnecting
       if (existing.player1.id === userId) {
         existing.player1.connected = true;
-        existing.player1.lastSeen = Date.now();
+        existing.player1.lastSeen = now;
         if (targetUser.name) existing.player1.name = targetUser.name;
         if (targetUser.avatar) existing.player1.avatar = targetUser.avatar;
         if (targetUser.customPhoto) existing.player1.customPhoto = targetUser.customPhoto;
@@ -505,7 +531,7 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
       // CASE 3: Player 2 reconnecting
       if (existing.player2 && existing.player2.id === userId) {
         existing.player2.connected = true;
-        existing.player2.lastSeen = Date.now();
+        existing.player2.lastSeen = now;
         if (targetUser.name) existing.player2.name = targetUser.name;
         if (targetUser.avatar) existing.player2.avatar = targetUser.avatar;
         if (targetUser.customPhoto) existing.player2.customPhoto = targetUser.customPhoto;
@@ -520,24 +546,37 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
         return;
       }
 
-      // CASE 4: Room already has two players (and user is neither of them)
-      if (existing.player2 && existing.player2.id !== userId) {
-        res.status(400).json({
-          success: false,
-          error: 'ROOM_FULL',
-          message: 'This room already has two players. Please choose a different 8-digit code.',
-          message_ar: 'هذه الغرفة تضم لاعبين بالفعل. يرجى اختيار رمز آخر مكون من 8 أرقام.',
-        });
-        return;
+      // CASE 3.5: Player 2 previously joined but disconnected/abandoned before match start
+      // Allow a new player to fill the vacant Player 2 slot
+      if (
+        existing.player2 &&
+        existing.player2.id !== userId &&
+        !existing.player2.connected &&
+        (existing.status === 'waiting' || existing.status === 'ready') &&
+        now - existing.player2.lastSeen > 20000
+      ) {
+        existing.player2 = undefined;
+        existing.status = 'waiting';
       }
 
-      // CASE 5: Match already in progress
+      // CASE 4: Match already in progress
       if (existing.status === 'playing' || existing.status === 'round_end') {
         res.status(400).json({
           success: false,
           error: 'MATCH_IN_PROGRESS',
-          message: 'This match is already in progress between two other players.',
-          message_ar: 'المباراة جارية بالفعل بين لاعبين آخرين.',
+          message: 'This match is already in progress between two other players. Please choose a different 8-digit code.',
+          message_ar: 'المباراة جارية بالفعل بين لاعبين آخرين. يرجى اختيار رمز آخر مكون من 8 أرقام.',
+        });
+        return;
+      }
+
+      // CASE 5: Room already has two active players
+      if (existing.player2 && existing.player2.id !== userId && existing.player2.connected) {
+        res.status(400).json({
+          success: false,
+          error: 'ROOM_FULL',
+          message: 'This room already has two active players. Please choose a different 8-digit code.',
+          message_ar: 'هذه الغرفة تضم لاعبين نشطين بالفعل. يرجى اختيار رمز آخر مكون من 8 أرقام.',
         });
         return;
       }
@@ -551,7 +590,7 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
         connected: true,
         score: 0,
         correctCount: 0,
-        lastSeen: Date.now(),
+        lastSeen: now,
       };
 
       existing.status = 'ready';
@@ -582,7 +621,69 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
       });
     } catch (e: any) {
       console.error('Error in /api/1v1/room/enter:', e);
-      res.status(500).json({ success: false, error: 'SERVER_ERROR', message: e.message });
+      res.status(500).json({
+        success: false,
+        error: 'SERVER_ERROR',
+        message: e?.message || 'Server error occurred during room connection.',
+        message_ar: 'حدث خطأ في الخادم أثناء الاتصال بالغرفة.',
+      });
+    }
+  });
+
+  // LEAVE ROOM: Clean departure frees the slot or resets waiting rooms
+  app.post('/api/1v1/room/leave', (req: Request, res: Response) => {
+    try {
+      const { roomCode, playerId } = req.body || {};
+      const code = normalize8DigitCode(roomCode);
+      const room = rooms.get(code);
+
+      if (!room) {
+        res.json({ success: true, action: 'room_not_found' });
+        return;
+      }
+
+      if (room.player1.id === playerId) {
+        room.player1.connected = false;
+        if (room.status === 'waiting') {
+          // Host left before anyone joined -> delete room
+          if (room.timerTimeout) clearTimeout(room.timerTimeout);
+          if (room.intermissionTimeout) clearTimeout(room.intermissionTimeout);
+          rooms.delete(code);
+        } else {
+          broadcastToRoom(room, {
+            type: 'player_connection_change',
+            playerId,
+            connected: false,
+          });
+        }
+      } else if (room.player2 && room.player2.id === playerId) {
+        room.player2.connected = false;
+        if (room.status === 'ready') {
+          // P2 left during countdown -> revert to waiting
+          room.player2 = undefined;
+          room.status = 'waiting';
+          if (room.timerTimeout) clearTimeout(room.timerTimeout);
+          broadcastToRoom(room, {
+            type: 'player_connection_change',
+            playerId,
+            connected: false,
+          });
+          broadcastToRoom(room, {
+            type: 'room_created',
+            room: getSafeRoomView(room),
+          });
+        } else {
+          broadcastToRoom(room, {
+            type: 'player_connection_change',
+            playerId,
+            connected: false,
+          });
+        }
+      }
+
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
     }
   });
 
@@ -1141,13 +1242,60 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
             return;
           }
 
-          // Room full
-          if (existing.player2 && existing.player2.id !== userId) {
+          // Clean reset if finished or host abandoned
+          const wsNow = Date.now();
+          if (
+            existing.status === 'finished' ||
+            (existing.status === 'waiting' && existing.player1.id !== userId && (!existing.player1.connected || wsNow - existing.player1.lastSeen > 30000))
+          ) {
+            existing.status = 'waiting';
+            existing.createdAt = wsNow;
+            existing.creatorId = userId;
+            existing.questions = shuffle(questionPool).slice(0, 30);
+            existing.currentQuestionIndex = 0;
+            existing.questionStartTime = 0;
+            existing.rematchRequestedBy = undefined;
+            existing.player1 = {
+              id: userId,
+              name: user.name || 'Player 1',
+              avatar: user.avatar || 'striker',
+              customPhoto: user.customPhoto,
+              socket: ws,
+              connected: true,
+              score: 0,
+              correctCount: 0,
+              lastSeen: wsNow,
+            };
+            existing.player2 = undefined;
+            boundRoomCode = roomCode;
+            boundPlayerId = userId;
+            sendToSocket(ws, {
+              type: 'room_created',
+              roomCode,
+              action: 'created',
+              room: getSafeRoomView(existing, userId),
+            });
+            return;
+          }
+
+          // Player 2 vacant slot replacement if previous P2 disconnected
+          if (
+            existing.player2 &&
+            existing.player2.id !== userId &&
+            !existing.player2.connected &&
+            (existing.status === 'waiting' || existing.status === 'ready')
+          ) {
+            existing.player2 = undefined;
+            existing.status = 'waiting';
+          }
+
+          // Room full (only when two players are actively connected)
+          if (existing.player2 && existing.player2.id !== userId && existing.player2.connected) {
             sendToSocket(ws, {
               type: 'error',
               code: 'ROOM_FULL',
-              message: 'This room already has two players. Please choose a different 8-digit code.',
-              message_ar: 'هذه الغرفة تضم لاعبين بالفعل. يرجى اختيار رمز آخر مكون من 8 أرقام.',
+              message: 'This room already has two active players. Please choose a different 8-digit code.',
+              message_ar: 'هذه الغرفة تضم لاعبين نشطين بالفعل. يرجى اختيار رمز آخر مكون من 8 أرقام.',
             });
             return;
           }
