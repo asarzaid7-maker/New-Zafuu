@@ -14,8 +14,9 @@ const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const httpServer = http.createServer(app);
 
-// Mount JSON body parser middleware before routes
-app.use(express.json());
+// Mount JSON & URL-encoded body parser middleware with generous 50mb limit for custom avatars & match payloads
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Initialize 1v1 Football Challenge Real-Time WebSocket & REST Backend
 setupOneVsOneMultiplayer(app, httpServer);

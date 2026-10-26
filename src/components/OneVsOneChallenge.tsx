@@ -64,7 +64,7 @@ interface RoomState {
 
 interface OneVsOneChallengeProps {
   language: Language;
-  user: UserProfile;
+  user: UserProfile | null;
   onBackToLobby: () => void;
   onOpenCoinShop?: () => void;
 }
@@ -74,6 +74,24 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
   user,
   onBackToLobby,
 }) => {
+  // Stable per-tab player session ID (allows 2 tabs in same browser or 2 devices to connect smoothly)
+  const currentSessionPlayerId = React.useMemo(() => {
+    let tabSuffix = '';
+    try {
+      tabSuffix = sessionStorage.getItem('zf_1v1_tab_id') || '';
+      if (!tabSuffix) {
+        tabSuffix = Math.random().toString(36).slice(2, 7);
+        sessionStorage.setItem('zf_1v1_tab_id', tabSuffix);
+      }
+    } catch {}
+    const baseId = user?.id || 'player_' + Date.now();
+    return tabSuffix ? `${baseId}_${tabSuffix}` : baseId;
+  }, [user?.id]);
+
+  const currentUsername = user?.username || 'Manager';
+  const currentAvatar = user?.avatar || 'striker';
+  const currentCustomPhoto = user?.customPhoto;
+
   // Navigation screen: 'lobby' | 'room' | 'match' | 'results'
   const [screen, setScreen] = useState<'lobby' | 'room' | 'match' | 'results'>('lobby');
 
@@ -338,7 +356,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
       });
 
       // Audio feedback for local player
-      const isPlayer1 = room?.player1.id === user.id;
+      const isPlayer1 = room?.player1.id === currentSessionPlayerId;
       const myResult = isPlayer1 ? data.player1Result : data.player2Result;
       if (myResult?.isCorrect) {
         sounds.playCorrect();
@@ -360,7 +378,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
       });
       setScreen('results');
 
-      if (data.winnerId === user.id) {
+      if (data.winnerId === currentSessionPlayerId) {
         sounds.playVictory();
         confetti({
           particleCount: 120,
@@ -433,25 +451,29 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
       sounds.playWrong();
       return;
     }
-  }, [language, room?.player1.id, user.id]);
+  }, [language, room?.player1.id, currentSessionPlayerId]);
 
-  // Connect Real-Time Subscriptions (SSE + Polling + Non-blocking WS)
+  // Connect Real-Time Subscriptions (SSE + Polling + Bidirectional WS)
   const connectRealtime = useCallback((roomCode: string) => {
     boundCodeRef.current = roomCode;
 
-    // 1. Close existing SSE and Poller
+    // 1. Close existing SSE, Poller, and WS
     if (eventSourceRef.current) {
-      eventSourceRef.current.close();
+      try { eventSourceRef.current.close(); } catch {}
       eventSourceRef.current = null;
     }
     if (syncIntervalRef.current) {
       clearInterval(syncIntervalRef.current);
       syncIntervalRef.current = null;
     }
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch {}
+      wsRef.current = null;
+    }
 
     // 2. Start Server-Sent Events (SSE) Stream
     try {
-      const sseUrl = `/api/1v1/room/${roomCode}/events?playerId=${encodeURIComponent(user.id)}`;
+      const sseUrl = `/api/1v1/room/${roomCode}/events?playerId=${encodeURIComponent(currentSessionPlayerId)}`;
       const es = new EventSource(sseUrl);
 
       es.onopen = () => {
@@ -482,7 +504,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
       if (!boundCodeRef.current) return;
       try {
         const resp = await fetch(
-          `/api/1v1/room/${roomCode}/sync?since=${lastSeqRef.current}&playerId=${encodeURIComponent(user.id)}`
+          `/api/1v1/room/${roomCode}/sync?since=${lastSeqRef.current}&playerId=${encodeURIComponent(currentSessionPlayerId)}`
         );
         if (resp.ok) {
           const data = await resp.json();
@@ -490,6 +512,9 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
             for (const ev of data.events) {
               handleServerMessage(ev);
             }
+          }
+          if (typeof data.lastSeq === 'number') {
+            lastSeqRef.current = Math.max(lastSeqRef.current, data.lastSeq);
           }
           if (data.room && data.room.status) {
             setRoom((prev) => {
@@ -511,11 +536,28 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
       }
     }, 1000);
 
-    // 4. Optional parallel WebSocket (non-blocking fallback)
+    // 4. Parallel WebSocket with bidirectional message binding
     try {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}/ws/1v1`;
       const ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        try {
+          ws.send(
+            JSON.stringify({
+              type: 'enter_room',
+              roomCode,
+              user: {
+                id: currentSessionPlayerId,
+                name: currentUsername,
+                avatar: currentAvatar,
+                customPhoto: currentCustomPhoto,
+              },
+            })
+          );
+        } catch {}
+      };
 
       ws.onmessage = (event) => {
         try {
@@ -528,7 +570,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
     } catch {
       // WS is non-essential since SSE + REST are active
     }
-  }, [handleServerMessage, user.id]);
+  }, [handleServerMessage, currentSessionPlayerId, currentUsername, currentAvatar, currentCustomPhoto]);
 
   // Clean up on unmount
   useEffect(() => {
@@ -580,36 +622,64 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
     sounds.playClick();
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+      // Safe photo handling to avoid exceeding network packet thresholds
+      const safePhoto =
+        currentCustomPhoto && currentCustomPhoto.length > 250000
+          ? undefined
+          : currentCustomPhoto;
+
       const response = await fetch('/api/1v1/room/enter', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           roomCode: cleanCode,
           user: {
-            id: user.id,
-            name: user.username,
-            avatar: user.avatar,
-            customPhoto: user.customPhoto,
+            id: currentSessionPlayerId,
+            name: currentUsername,
+            avatar: currentAvatar,
+            customPhoto: safePhoto,
           },
         }),
       });
 
-      const data = await response.json();
+      clearTimeout(timeoutId);
 
-      if (!response.ok || !data.success) {
+      let data: any = null;
+      try {
+        const text = await response.text();
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(
+          response.status === 413
+            ? (language === 'ar' ? 'حجم البيانات كبير جداً.' : 'Payload too large.')
+            : (language === 'ar'
+                ? `تعذر الاتصال بخادم المباريات (رمز الاستجابة: ${response.status}).`
+                : `Multiplayer server returned status ${response.status}.`)
+        );
+      }
+
+      if (!response.ok || !data?.success) {
         setConnecting(false);
         setErrorMessage(
           language === 'ar'
-            ? data.message_ar || data.message || 'تعذر الاتصال بالمباراة.'
-            : data.message || 'Failed to connect to multiplayer match.'
+            ? data?.message_ar || data?.message || 'تعذر الاتصال بالمباراة.'
+            : data?.message || 'Failed to connect to multiplayer match.'
         );
         sounds.playWrong();
         return;
       }
 
+      if (!data.room) {
+        throw new Error('Room details missing from server response.');
+      }
+
       setRoom(data.room);
       setConnecting(false);
-      connectRealtime(data.roomCode);
+      connectRealtime(data.roomCode || cleanCode);
 
       if (data.room.status === 'playing') {
         setScreen('match');
@@ -621,12 +691,23 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
 
       sounds.playWhistle();
     } catch (e: any) {
+      console.error('1v1 room enter error:', e);
       setConnecting(false);
-      setErrorMessage(
-        language === 'ar'
-          ? 'تعذر الاتصال بخادم المباريات. تحقق من اتصال الإنترنت.'
-          : 'Failed to connect to multiplayer server. Check your connection.'
-      );
+      if (e?.name === 'AbortError') {
+        setErrorMessage(
+          language === 'ar'
+            ? 'انتهت مهلة الاتصال بخادم المباريات. تحقق من اتصال الإنترنت وحاول مجدداً.'
+            : 'Connection to multiplayer server timed out. Check your connection and retry.'
+        );
+      } else {
+        setErrorMessage(
+          e?.message && !e.message.includes('Unexpected') && !e.message.includes('JSON')
+            ? e.message
+            : language === 'ar'
+            ? 'تعذر الاتصال بخادم المباريات. تحقق من اتصال الإنترنت.'
+            : 'Failed to connect to multiplayer server. Check your connection.'
+        );
+      }
       sounds.playWrong();
     }
   };
@@ -642,7 +723,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomCode: room.code,
-          playerId: user.id,
+          playerId: currentSessionPlayerId,
         }),
       });
     } catch {}
@@ -661,11 +742,26 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomCode: room.code,
-          playerId: user.id,
+          playerId: currentSessionPlayerId,
           questionIndex: room.currentQuestionIndex,
           selectedIndex: optionIndex,
         }),
       });
+
+      // Also send over WebSocket if open for instant response
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        try {
+          wsRef.current.send(
+            JSON.stringify({
+              type: 'submit_answer',
+              roomCode: room.code,
+              playerId: currentSessionPlayerId,
+              questionIndex: room.currentQuestionIndex,
+              selectedIndex: optionIndex,
+            })
+          );
+        } catch {}
+      }
 
       if (res.ok) {
         const data = await res.json();
@@ -673,7 +769,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
         if (data.score !== undefined) {
           setRoom((prev) => {
             if (!prev) return prev;
-            const isP1 = prev.player1.id === user.id;
+            const isP1 = prev.player1.id === currentSessionPlayerId;
             if (isP1) {
               return {
                 ...prev,
@@ -712,7 +808,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomCode: room.code,
-          playerId: user.id,
+          playerId: currentSessionPlayerId,
           action: 'request',
         }),
       });
@@ -728,7 +824,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomCode: room.code,
-          playerId: user.id,
+          playerId: currentSessionPlayerId,
           action: 'accept',
         }),
       });
@@ -747,7 +843,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
   // Copy Match Result Helper
   const handleCopyResult = () => {
     if (!finalResults || !room) return;
-    const isMeWinner = finalResults.winnerId === user.id;
+    const isMeWinner = finalResults.winnerId === currentSessionPlayerId;
     const resultText =
       language === 'ar'
         ? `⚽ نتيجة تحدي 1 ضد 1 في زافوت!\n${
@@ -941,10 +1037,10 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
               <div className="flex items-center gap-3">
                 <FootballAvatar
                   player={{
-                    id: user.id,
-                    name: user.username,
-                    avatar: user.avatar,
-                    customPhoto: user.customPhoto,
+                    id: currentSessionPlayerId,
+                    name: currentUsername,
+                    avatar: currentAvatar,
+                    customPhoto: currentCustomPhoto,
                     connected: true,
                     score: 0,
                     correctCount: 0,
@@ -953,7 +1049,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
                 />
                 <div>
                   <div className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
-                    <span>{user.username}</span>
+                    <span>{currentUsername}</span>
                     <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold">
                       {language === 'ar' ? 'حسابك' : 'You'}
                     </span>
@@ -1036,7 +1132,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
   // SCREEN 2: WAITING ROOM / LOCKER ROOM TUNNEL
   // =========================================================================
   if (screen === 'room' && room) {
-    const isHost = room.creatorId === user.id;
+    const isHost = room.creatorId === currentSessionPlayerId;
     const isPlayer2Joined = !!room.player2 && room.player2.connected;
 
     return (
@@ -1086,7 +1182,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
             <Scoreboard1v1
               player1={room.player1}
               player2={room.player2}
-              currentUserId={user.id}
+              currentUserId={currentSessionPlayerId}
               language={language}
               totalQuestions={room.totalQuestions}
             />
@@ -1130,7 +1226,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative">
           {/* PLAYER 1 (Host) */}
           <div className="rounded-2xl border border-slate-700 bg-[#09121f] p-5 sm:p-6 flex items-center gap-4 relative shadow-lg">
-            <FootballAvatar player={room.player1} size="lg" isCurrent={room.player1.id === user.id} side="left" />
+            <FootballAvatar player={room.player1} size="lg" isCurrent={room.player1.id === currentSessionPlayerId} side="left" />
 
             <div className="space-y-1 flex-1">
               <div className="flex items-center gap-2">
@@ -1138,7 +1234,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
                 <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/30">
                   {language === 'ar' ? 'المضيف (P1)' : 'Host (P1)'}
                 </span>
-                {room.player1.id === user.id && (
+                {room.player1.id === currentSessionPlayerId && (
                   <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold">
                     {language === 'ar' ? 'أنت' : 'You'}
                   </span>
@@ -1161,7 +1257,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
           >
             {isPlayer2Joined && room.player2 ? (
               <>
-                <FootballAvatar player={room.player2} size="lg" isCurrent={room.player2.id === user.id} side="right" />
+                <FootballAvatar player={room.player2} size="lg" isCurrent={room.player2.id === currentSessionPlayerId} side="right" />
 
                 <div className="space-y-1 flex-1">
                   <div className="flex items-center gap-2">
@@ -1169,7 +1265,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
                     <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px] font-bold border border-cyan-500/30">
                       {language === 'ar' ? 'المنافس (P2)' : 'Challenger (P2)'}
                     </span>
-                    {room.player2.id === user.id && (
+                    {room.player2.id === currentSessionPlayerId && (
                       <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold">
                         {language === 'ar' ? 'أنت' : 'You'}
                       </span>
@@ -1260,7 +1356,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
   // =========================================================================
   if (screen === 'match' && room && room.currentQuestion) {
     const q = room.currentQuestion;
-    const isP1 = room.player1.id === user.id;
+    const isP1 = room.player1.id === currentSessionPlayerId;
     const opponent = isP1 ? room.player2 : room.player1;
 
     const progressPct = ((room.currentQuestionIndex + 1) / room.totalQuestions) * 100;
@@ -1272,7 +1368,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
         <Scoreboard1v1
           player1={room.player1}
           player2={room.player2}
-          currentUserId={user.id}
+          currentUserId={currentSessionPlayerId}
           language={language}
           timeLeft={timeLeft}
           showTimer={true}
@@ -1411,7 +1507,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
   // SCREEN 4: MATCH FINAL RESULTS SCREEN
   // =========================================================================
   if (screen === 'results' && finalResults) {
-    const isMeWinner = finalResults.winnerId === user.id;
+    const isMeWinner = finalResults.winnerId === currentSessionPlayerId;
     const isDraw = finalResults.winnerId === 'draw';
 
     const p1 = finalResults.player1;
@@ -1423,7 +1519,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
         <Scoreboard1v1
           player1={p1}
           player2={p2}
-          currentUserId={user.id}
+          currentUserId={currentSessionPlayerId}
           language={language}
           isFinal={true}
           winnerId={finalResults.winnerId}
@@ -1558,7 +1654,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
           </div>
 
           {/* Rematch Banner if requested */}
-          {room?.rematchRequestedBy && room.rematchRequestedBy !== user.id && (
+          {room?.rematchRequestedBy && room.rematchRequestedBy !== currentSessionPlayerId && (
             <div className="p-3 bg-amber-500/20 border border-amber-500/40 rounded-xl text-xs sm:text-sm text-amber-300 font-bold flex items-center justify-center gap-2 animate-bounce">
               <Sparkles className="w-4 h-4" />
               <span>
@@ -1571,7 +1667,7 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
 
           {/* Action Buttons */}
           <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
-            {room?.rematchRequestedBy && room.rematchRequestedBy !== user.id ? (
+            {room?.rematchRequestedBy && room.rematchRequestedBy !== currentSessionPlayerId ? (
               <button
                 onClick={handleAcceptRematch}
                 className="w-full sm:w-auto px-7 py-3.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-xl text-sm shadow-lg shadow-emerald-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
@@ -1582,12 +1678,12 @@ export const OneVsOneChallenge: React.FC<OneVsOneChallengeProps> = ({
             ) : (
               <button
                 onClick={handleRequestRematch}
-                disabled={room?.rematchRequestedBy === user.id}
+                disabled={room?.rematchRequestedBy === currentSessionPlayerId}
                 className="w-full sm:w-auto px-7 py-3.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black rounded-xl text-sm shadow-lg shadow-amber-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
               >
                 <RotateCcw className="w-4 h-4" />
                 <span>
-                  {room?.rematchRequestedBy === user.id
+                  {room?.rematchRequestedBy === currentSessionPlayerId
                     ? (language === 'ar' ? 'بانتظار قبول الخصم...' : 'Waiting for Opponent...')
                     : (language === 'ar' ? 'طلب مباراة ثأرية (Rematch) 🔄' : 'Request Rematch 🔄')}
                 </span>

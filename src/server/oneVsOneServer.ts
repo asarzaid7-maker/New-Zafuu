@@ -231,6 +231,10 @@ function startNextQuestion(room: Room1v1) {
   }
 
   const currentQ = room.questions[room.currentQuestionIndex];
+  if (!currentQ) {
+    finishMatch(room);
+    return;
+  }
 
   // Broadcast question to both players WITHOUT correctIndex
   broadcastToRoom(room, {
@@ -445,6 +449,37 @@ export function setupOneVsOneMultiplayer(app: Express, server: http.Server) {
           roomCode: code,
           isHost: true,
           room: getSafeRoomView(newRoom, userId),
+        });
+        return;
+      }
+
+      // CASE 1.5: Room exists but was finished -> Reset room cleanly for a brand new match!
+      if (existing.status === 'finished') {
+        const selectedQuestions = shuffle(questionPool).slice(0, 30);
+        existing.status = 'waiting';
+        existing.createdAt = Date.now();
+        existing.creatorId = userId;
+        existing.questions = selectedQuestions;
+        existing.currentQuestionIndex = 0;
+        existing.questionStartTime = 0;
+        existing.rematchRequestedBy = undefined;
+        existing.player1 = {
+          id: userId,
+          name: targetUser.name || 'Player 1',
+          avatar: targetUser.avatar || 'striker',
+          customPhoto: targetUser.customPhoto,
+          connected: true,
+          score: 0,
+          correctCount: 0,
+          lastSeen: Date.now(),
+        };
+        existing.player2 = undefined;
+        res.json({
+          success: true,
+          action: 'created',
+          roomCode: code,
+          isHost: true,
+          room: getSafeRoomView(existing, userId),
         });
         return;
       }

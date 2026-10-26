@@ -51,6 +51,9 @@ export default function App() {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed.coins === 'number') {
           return {
+            id: typeof parsed.id === 'string' && parsed.id.trim() ? parsed.id.trim() : 'player_' + Date.now(),
+            username: typeof parsed.username === 'string' && parsed.username.trim() ? parsed.username.trim() : 'Manager',
+            avatar: typeof parsed.avatar === 'string' && parsed.avatar ? parsed.avatar : 'striker',
             ...parsed,
             customPhoto: typeof parsed.customPhoto === 'string' ? parsed.customPhoto : undefined,
             trophies: Array.isArray(parsed.trophies) ? parsed.trophies : [],
